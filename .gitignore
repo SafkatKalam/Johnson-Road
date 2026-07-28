@@ -1,0 +1,29 @@
+# macOS
+.DS_Store
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Database
+*.db
+
+# Uploads
+uploads/
+
+# Outputs
+outputs/
+
+# Dataset
+datasets/
+
+# Node
+frontend/node_modules/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
