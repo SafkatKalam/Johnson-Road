@@ -1,44 +1,66 @@
-@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* Johnson Road Design Tokens */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
-  --radius: 12px;
-
-  --background: #0f172a;
-  --foreground: #f8fafc;
-
-  --card: #111827;
-
-  --primary: #2563eb;
-
-  --success: #10b981;
-
-  --warning: #f59e0b;
-
-  --danger: #ef4444;
-}
-
-* {
-  box-sizing: border-box;
+  color-scheme: dark;
 }
 
 html,
 body,
 #root {
-  width: 100%;
-  min-height: 100vh;
+  height: 100%;
 }
 
 body {
-  margin: 0;
+  @apply bg-ink-950 text-ink-100 font-sans antialiased;
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
 
-  background: var(--background);
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #252a39 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #252a39;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #323849;
+  background-clip: padding-box;
+}
 
-  color: var(--foreground);
+@layer components {
+  .surface {
+    @apply rounded-xl border border-white/[0.06] bg-ink-850/80 backdrop-blur-sm;
+  }
+  .surface-hover {
+    @apply transition-colors hover:border-white/10 hover:bg-ink-800;
+  }
+  .hairline {
+    @apply border-t border-white/[0.06];
+  }
+}
 
-  font-family:
-    Inter,
-    system-ui,
-    sans-serif;
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-white via-ink-50 to-ink-200 bg-clip-text text-transparent;
+  }
+  .text-gradient-brand {
+    @apply bg-gradient-to-r from-brand-300 to-accent-400 bg-clip-text text-transparent;
+  }
 }
