@@ -1,16 +1,42 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import type { Session, User } from '@supabase/supabase-js';
-import { supabase, type Profile, type Organization } from '@/lib/supabase';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+
+export interface User {
+  id: string;
+  email: string;
+}
+
+export interface Profile {
+  id: string;
+  full_name: string;
+  avatar_url: string | null;
+  role: string;
+  organization_id: string;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+}
 
 interface AuthContextValue {
-  session: Session | null;
+  session: unknown;
   user: User | null;
   profile: Profile | null;
   organization: Organization | null;
   loading: boolean;
   needsOnboarding: boolean;
-  signOut: () => Promise<void>;
-  refreshProfile: () => Promise<void>;
+
+  signOut(): Promise<void>;
+
+  refreshProfile(): Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -24,83 +50,70 @@ const AuthContext = createContext<AuthContextValue>({
   refreshProfile: async () => {},
 });
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [organization, setOrganization] = useState<Organization | null>(null);
+export function AuthProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
   const [loading, setLoading] = useState(true);
-  const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
-  const fetchProfileAndOrg = async (uid: string) => {
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', uid)
-      .maybeSingle();
+  const [user, setUser] = useState<User | null>(null);
 
-    setProfile(prof as Profile | null);
+  const [profile, setProfile] =
+    useState<Profile | null>(null);
 
-    if (prof?.organization_id) {
-      const { data: org } = await supabase
-        .from('organizations')
-        .select('*')
-        .eq('id', prof.organization_id)
-        .maybeSingle();
-      setOrganization(org as Organization | null);
-      setNeedsOnboarding(false);
-    } else {
-      setOrganization(null);
-      setNeedsOnboarding(true);
-    }
-  };
+  const [organization, setOrganization] =
+    useState<Organization | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      if (data.session?.user) {
-        fetchProfileAndOrg(data.session.user.id).finally(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
-    });
+    const logged =
+      localStorage.getItem("jr-auth") === "true";
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
-      if (newSession?.user) {
-        (async () => {
-          await fetchProfileAndOrg(newSession.user.id);
-          setLoading(false);
-        })();
-      } else {
-        setProfile(null);
-        setOrganization(null);
-        setNeedsOnboarding(false);
-        setLoading(false);
-      }
-    });
+    if (logged) {
+      setUser({
+        id: "1",
+        email: "demo@johnsonroad.ai",
+      });
 
-    return () => {
-      authListener.subscription.unsubscribe();
-    };
+      setProfile({
+        id: "1",
+        full_name: "Safkat Kalam",
+        avatar_url: null,
+        role: "Administrator",
+        organization_id: "org-1",
+      });
+
+      setOrganization({
+        id: "org-1",
+        name: "Johnson Road",
+        slug: "johnson-road",
+        plan: "Pro",
+      });
+    }
+
+    setLoading(false);
   }, []);
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    setProfile(null);
-    setOrganization(null);
-    setNeedsOnboarding(false);
-  };
+  async function signOut() {
+    localStorage.removeItem("jr-auth");
 
-  const refreshProfile = async () => {
-    if (user) await fetchProfileAndOrg(user.id);
-  };
+    window.location.href = "/login";
+  }
+
+  async function refreshProfile() {}
 
   return (
     <AuthContext.Provider
-      value={{ session, user, profile, organization, loading, needsOnboarding, signOut, refreshProfile }}
+      value={{
+        session: null,
+        user,
+        profile,
+        organization,
+        loading,
+        needsOnboarding: false,
+        signOut,
+        refreshProfile,
+      }}
     >
       {children}
     </AuthContext.Provider>

@@ -1,36 +1,40 @@
 export interface AuthUser {
-  id: string
-  name: string
-  email: string
-  role: string
+  id: string;
+  email: string;
+  name: string;
+  role: string;
 }
 
-const demoUser: AuthUser = {
+const DEMO_USER: AuthUser = {
   id: "1",
+  email: "admin@johnsonroad.ai",
   name: "Safkat Kalam",
-  email: "demo@johnsonroad.ai",
   role: "Administrator",
-}
+};
 
-export const authService = {
-  async login() {
-    localStorage.setItem("jr-auth", "true")
-    return demoUser
-  },
+class AuthService {
+  async login(email: string, password: string) {
+    // Temporary authentication
+    if (!email || !password) {
+      throw new Error("Please enter email and password.");
+    }
+
+    localStorage.setItem("jr-auth", "true");
+
+    return DEMO_USER;
+  }
 
   async logout() {
-    localStorage.removeItem("jr-auth")
-  },
+    localStorage.removeItem("jr-auth");
+  }
 
-  async getCurrentUser() {
-    const logged = localStorage.getItem("jr-auth")
+  async currentUser() {
+    const logged = localStorage.getItem("jr-auth");
 
-    if (!logged) return null
+    if (!logged) return null;
 
-    return demoUser
-  },
-
-  isAuthenticated() {
-    return localStorage.getItem("jr-auth") === "true"
-  },
+    return DEMO_USER;
+  }
 }
+
+export const authService = new AuthService();

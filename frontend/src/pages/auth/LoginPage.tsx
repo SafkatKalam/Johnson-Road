@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, AlertCircle, ArrowRight } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 import { Input, Button } from '@/components/ui';
-import { supabase } from '@/lib/supabase';
+import { authService } from '@/services/auth.service';
 import { useAuth } from '@/lib/auth';
 
 export function LoginPage() {
@@ -14,22 +14,28 @@ export function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+  setLoading(true);
+  setError("");
 
-    if (signInError) {
-      setError(signInError.message);
-      setLoading(false);
-      return;
-    }
+  try {
+    await authService.login(email, password);
 
     await refreshProfile();
-    navigate('/');
-  };
+
+    navigate("/");
+  } catch (err) {
+    if (err instanceof Error) {
+      setError(err.message);
+    } else {
+      setError("Login failed.");
+    }
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <AuthLayout>
