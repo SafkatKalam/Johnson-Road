@@ -12,10 +12,12 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { Card, CardHeader, Badge, Button, ProgressBar, EmptyState } from '@/components/ui';
-import { jobQueue, type JobStatus, type JobPriority } from '@/lib/mockData';
+import { jobQueue, type JobStatus, type JobPriority } from '@/services/processing.service';
 import { formatCompact } from '@/lib/utils';
 
-const tabs: { key: JobStatus | 'all'; label: string }[] = [
+type QueueTab = JobStatus | 'all';
+
+const tabs: { key: QueueTab; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'running', label: 'Running' },
   { key: 'queued', label: 'Queued' },
@@ -26,6 +28,7 @@ const tabs: { key: JobStatus | 'all'; label: string }[] = [
 
 const statusConfig: Record<JobStatus, { icon: typeof Cpu; tone: 'sky' | 'amber' | 'brand' | 'rose' | 'slate'; dot: boolean; pulse: boolean }> = {
   running: { icon: Play, tone: 'sky', dot: true, pulse: true },
+  processing: { icon: Play, tone: 'sky', dot: true, pulse: true },
   queued: { icon: Clock, tone: 'amber', dot: false, pulse: false },
   completed: { icon: CheckCircle2, tone: 'brand', dot: false, pulse: false },
   failed: { icon: AlertCircle, tone: 'rose', dot: false, pulse: false },

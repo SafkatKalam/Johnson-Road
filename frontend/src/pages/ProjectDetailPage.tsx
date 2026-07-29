@@ -34,15 +34,10 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { Card, CardHeader, Button, Badge, ProgressBar } from '@/components/ui';
-import {
-  projects,
-  projectVideos,
-  projectReportsList,
-  trafficByProject,
-  vehicleClassBreakdown,
-  timelineStages,
-  processingJobs,
-} from '@/lib/mockData';
+import { projects, projectVideos } from '@/services/project.service';
+import { projectReportsList } from '@/services/report.service';
+import { trafficByProject, vehicleClassBreakdown } from '@/services/dashboard.service';
+import { timelineStages, processingJobs } from '@/services/processing.service';
 import { statusTone, statusLabel, thumbnailGradient } from '@/lib/helpers';
 import { formatCompact, formatNumber, formatDate, formatRelative, formatBytes } from '@/lib/utils';
 

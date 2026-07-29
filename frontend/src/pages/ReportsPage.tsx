@@ -33,21 +33,9 @@ import {
   Link2,
 } from 'lucide-react';
 import { Card, CardHeader, Button, Badge, Select } from '@/components/ui';
-import {
-  trafficVolumeByHour,
-  vehicleClassBreakdown,
-  weeklyTrafficTrend,
-  projects,
-} from '@/lib/mockData';
+import { trafficVolumeByHour, vehicleClassBreakdown, weeklyTrafficTrend, peakHours } from '@/services/report.service';
+import { projects } from '@/services/project.service';
 import { formatCompact, formatNumber } from '@/lib/utils';
-
-const peakHours = [
-  { hour: '08:00', vehicles: 3762, road: 'A406 East' },
-  { hour: '17:30', vehicles: 3648, road: 'A406 East' },
-  { hour: '18:00', vehicles: 3412, road: 'A406 East' },
-  { hour: '08:15', vehicles: 3290, road: 'Parramatta Rd' },
-  { hour: '09:00', vehicles: 2981, road: 'M5 J14' },
-];
 
 const hourlyFlow = trafficVolumeByHour.map((d) => ({
   hour: d.hour,

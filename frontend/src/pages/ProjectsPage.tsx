@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { ProjectCard } from '@/components/shared/ProjectCard';
 import { Card, CardHeader, Button, Input, Badge, Modal, Select, EmptyState } from '@/components/ui';
-import { projects as allProjects, locationSuggestions, type ProjectStatus } from '@/lib/mockData';
+import { projects as allProjects, locationSuggestions, type ProjectStatus } from '@/services/project.service';
 import { statusTone, statusLabel, thumbnailGradient } from '@/lib/helpers';
 import { formatCompact, formatNumber, formatRelative, formatDate } from '@/lib/utils';
 

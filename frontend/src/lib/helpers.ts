@@ -1,4 +1,4 @@
-import type { ProjectStatus } from '@/lib/mockData';
+import type { ProjectStatus } from '@/services/project.service';
 
 export function statusTone(status: ProjectStatus): 'brand' | 'sky' | 'amber' | 'rose' | 'slate' {
   switch (status) {

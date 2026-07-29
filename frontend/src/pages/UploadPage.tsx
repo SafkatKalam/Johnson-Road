@@ -31,7 +31,8 @@ import { WizardStepper, WizardProgress } from '@/components/shared/WizardStepper
 import { VideoPreview } from '@/components/shared/VideoPreview';
 import { DetectionZoneCanvas } from '@/components/shared/DetectionZoneCanvas';
 import { CountLineCanvas } from '@/components/shared/CountLineCanvas';
-import { projects, locationSuggestions } from '@/lib/mockData';
+import { projects } from '@/services/project.service';
+import { initialUploadFiles, locationSuggestions, type UploadFile } from '@/services/upload.service';
 import { formatBytes } from '@/lib/utils';
 
 const wizardSteps = [
@@ -46,22 +47,6 @@ const wizardSteps = [
   'Queue',
 ];
 
-interface UploadFile {
-  id: string;
-  name: string;
-  size: number;
-  duration: string;
-  resolution: string;
-  fps: number;
-  progress: number;
-  status: 'uploading' | 'queued' | 'done' | 'error';
-}
-
-const seedFiles: UploadFile[] = [
-  { id: 'f1', name: 'cam_01_northbound_20260725.mp4', size: 9_660_000_000, duration: '8h 00m', resolution: '1920×1080', fps: 30, progress: 100, status: 'done' },
-  { id: 'f2', name: 'cam_02_southbound_20260725.mp4', size: 9_840_000_000, duration: '8h 00m', resolution: '1920×1080', fps: 30, progress: 100, status: 'done' },
-];
-
 const statusConfig = {
   done: { icon: CheckCircle2, tone: 'text-brand-300', label: 'Uploaded' },
   uploading: { icon: Clock, tone: 'text-accent-400', label: 'Uploading' },
@@ -73,7 +58,7 @@ export function UploadPage() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [dragging, setDragging] = useState(false);
-  const [files, setFiles] = useState<UploadFile[]>(seedFiles);
+  const [files, setFiles] = useState<UploadFile[]>(initialUploadFiles);
   const [selectedProject, setSelectedProject] = useState('');
   const [confidence, setConfidence] = useState(45);
   const [generateReport, setGenerateReport] = useState(true);

@@ -3,27 +3,27 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, AlertCircle, ArrowRight } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 import { Input, Button } from '@/components/ui';
-import { authService } from '@/services/auth.service';
 import { useAuth } from '@/lib/auth';
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { refreshProfile } = useAuth();
+  const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-const handleSubmit = async (e: React.FormEvent) => {
+const handleSubmit = async (
+  e: React.FormEvent
+) => {
   e.preventDefault();
 
   setLoading(true);
+
   setError("");
 
   try {
-    await authService.login(email, password);
-
-    await refreshProfile();
+    await login(email, password);
 
     navigate("/");
   } catch (err) {

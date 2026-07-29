@@ -43,17 +43,16 @@ import {
   dashboardKpis,
   trafficVolumeByHour,
   vehicleClassBreakdown,
-  processingJobs,
   aiInsights,
   aiTimeline,
-  projects,
   recentActivity,
   quickActions,
   trafficByProject,
   segmentDetails,
   insightDetails,
-  type ProjectStatus,
-} from '@/lib/mockData';
+} from '@/services/dashboard.service';
+import { projects, type ProjectStatus } from '@/services/project.service';
+import { processingJobs } from '@/services/processing.service';
 import { statusTone, statusLabel } from '@/lib/helpers';
 import { formatCompact, formatNumber } from '@/lib/utils';
 

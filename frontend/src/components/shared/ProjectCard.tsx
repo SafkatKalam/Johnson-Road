@@ -5,7 +5,7 @@ import { formatCompact, formatNumber, formatRelative } from '@/lib/utils';
 import { MapPin, Clock, Video, Film, FileText, Cpu, HardDrive } from 'lucide-react';
 
 interface ProjectCardProps {
-  project: typeof import('@/lib/mockData').projects[number];
+  project: import('@/services/project.service').Project;
   to?: string;
   onClick?: () => void;
   compact?: boolean;

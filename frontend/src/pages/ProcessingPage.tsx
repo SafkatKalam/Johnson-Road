@@ -26,7 +26,7 @@ import {
   timelineStages,
   segments,
   type LogEntry,
-} from '@/lib/mockData';
+} from '@/services/processing.service';
 import { formatCompact, formatTime } from '@/lib/utils';
 
 const levelTone: Record<LogEntry['level'], string> = {
