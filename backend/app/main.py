@@ -1,41 +1,55 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.projects import router as project_router
-from app.database.database import Base, engine
-from app.database import models
+
+from app.ai.runtime import airuntime
+from app.core.config import settings
+from app.routers import dashboard_router, processing_router, projects_router, reports_router, uploads_router
+
 app = FastAPI(
-    title="Johnson Road API",
-    version="0.1.0",
-    description="Backend API for Johnson Road"
+    title=settings.app_name,
+    version="0.3.1",
+    description="Mock FastAPI backend for Johnson Road frontend service layer",
 )
 
-Base.metadata.create_all(bind=engine)
-
-# Allow React frontend to communicate with FastAPI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(project_router)
-
-@app.get("/")
-async def root():
-    return {
-        "project": "Johnson Road",
-        "status": "running",
-        "version": "0.1.0"
-    }
+app.include_router(dashboard_router, prefix=settings.api_prefix)
+app.include_router(projects_router, prefix=settings.api_prefix)
+app.include_router(uploads_router, prefix=settings.api_prefix)
+app.include_router(processing_router, prefix=settings.api_prefix)
+app.include_router(reports_router, prefix=settings.api_prefix)
 
 
-@app.get("/health")
-async def health():
+@app.on_event("startup")
+def startup_event():
+    airuntime.initialize()
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    return None
+
+
+@app.get("/", summary="Root")
+def root():
+    return {"project": "Johnson Road", "status": "running", "version": "0.3.1"}
+
+
+@app.get("/health", summary="Health check")
+def health():
+    runtime = airuntime.get_status()
     return {
         "status": "healthy",
-        "service": "backend"
+        "service": "backend",
+        "runtimeInitialized": runtime.initialized,
+        "detectorLoaded": runtime.detector_loaded,
+        "currentDetector": runtime.detector_name,
+        "device": runtime.device,
+        "modelPath": runtime.model_path,
     }

@@ -1,23 +1,25 @@
-from sqlalchemy.orm import Session
+from typing import Optional
 
-from app.database.models import Project
-from app.schemas.project import ProjectCreate
+from app.repositories.project_repository import ProjectRepository
 
-
-def create_project(db: Session, project: ProjectCreate):
-    db_project = Project(
-        name=project.name,
-        location=project.location,
-        road_name=project.road_name,
-        description=project.description,
-    )
-
-    db.add(db_project)
-    db.commit()
-    db.refresh(db_project)
-
-    return db_project
+_repository = ProjectRepository()
 
 
-def get_projects(db: Session):
-    return db.query(Project).order_by(Project.created_at.desc()).all()
+def get_projects() -> list[dict]:
+    return _repository.get_projects()
+
+
+def get_project(project_id: str) -> Optional[dict]:
+    return _repository.get_project(project_id)
+
+
+def get_project_videos(project_id: str) -> list[dict]:
+    return _repository.get_project_videos(project_id)
+
+
+def get_project_reports(project_id: str) -> list[dict]:
+    return _repository.get_project_reports(project_id)
+
+
+def get_location_suggestions() -> list[str]:
+    return _repository.get_location_suggestions()

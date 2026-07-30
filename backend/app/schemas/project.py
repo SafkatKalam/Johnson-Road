@@ -1,25 +1,59 @@
-from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
+
+from pydantic import BaseModel
 
 
-class ProjectCreate(BaseModel):
+class Project(BaseModel):
+    id: str
     name: str
-    location: Optional[str] = None
-    road_name: Optional[str] = None
-    description: Optional[str] = None
-
-
-class ProjectResponse(BaseModel):
-    id: int
-    name: str
-    location: Optional[str]
-    road_name: Optional[str]
-    description: Optional[str]
+    location: str
     status: str
-    roi_completed: bool
-    analysis_completed: bool
-    created_at: datetime
+    duration: int
+    videoCount: int
+    vehicleCount: int
+    avgFlow: int
+    peakHour: str
+    createdAt: str
+    updatedAt: Optional[str] = None
+    thumbnail: str
+    confidence: float
+    reportCount: Optional[int] = None
+    aiJobCount: Optional[int] = None
+    storageUsed: Optional[float] = None
 
-    class Config:
-        from_attributes = True
+
+class ProjectVideo(BaseModel):
+    id: str
+    name: str
+    duration: str
+    resolution: str
+    fps: int
+    size: str
+    status: str
+    camera: str
+
+
+class ProjectReport(BaseModel):
+    id: str
+    title: str
+    date: str
+    type: str
+    vehicleCount: int
+
+
+class ProjectListResponse(BaseModel):
+    projects: list[Project]
+
+
+class ProjectVideosResponse(BaseModel):
+    projectId: str
+    videos: list[ProjectVideo]
+
+
+class ProjectReportsResponse(BaseModel):
+    projectId: str
+    reports: list[ProjectReport]
+
+
+class LocationSuggestionsResponse(BaseModel):
+    suggestions: list[str]
