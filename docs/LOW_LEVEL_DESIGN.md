@@ -198,7 +198,9 @@ class Principal:      # Proposal
 - **Proposal**: `onboard(user, org_name, full_name)` in one transaction: insert organisation (slug from the name plus a short random suffix), insert owner membership, set `users.full_name`, write audit `organization.created`; any failure rolls back all. A user who already has a membership gets `409 already_member` (O67). This replaces the three Supabase writes (`OnboardingPage.tsx:36,48,63`) and fixes F11.
 - **Open**: suspended users. Default: `403 account_suspended` at step 2.
 
-- **Decided (FD14)**: pre-membership invitations are delivered by email, not organisation notifications. The sender must be able to retry delivery; no claim of delivered email is made until the provider accepts it. Provider integration and durable retry mechanism remain O38 implementation work. Membership-scoped notification rules remain unchanged.
+<!-- Adrishikhar - 7 November 2026, 19:07 (Asia/Dhaka) · Provider selected
+Changed by: Codex. Decision: EMAIL-01 in PREREQUISITES.md; Resend selected by Adrishikhar Barua, implementation pending. -->
+- **Decided (FD14)**: pre-membership invitations are delivered by email, not organisation notifications. Resend is selected by [EMAIL-01](PREREQUISITES.md). The sender must be able to retry delivery; provider acceptance records submission, not proof of recipient delivery. Provider integration and durable retry mechanism remain O38 implementation work. Membership-scoped notification rules remain unchanged.
 
 ### 4.7 Fixing F12 inside the backend
 
@@ -843,7 +845,7 @@ Fix: FD14: deliver invitations before membership without organisation notificati
 | Job `failed` (incl. `worker_lost`) | `job_failed` | `created_by` and all owners and admins | `/processing?job=<id>` | Proposal |
 | Job `cancelled` | `job_cancelled` | `created_by`, and the canceller if different | `/job-queue` | Proposal |
 | Report created | `report_ready` | The creator | `/reports` | Proposal |
-| Invitation before membership, whether or not a users row exists | none | Email to the invited address (delivery mechanism O38) | Token-bearing acceptance link | Decided delivery boundary; provider open |
+| Invitation before membership, whether or not a users row exists | none | Email to the invited address through Resend (EMAIL-01; integration O38) | Token-bearing acceptance link | Decided channel/provider; implementation pending |
 | Invitation accepted | info, if needed | Newly active member only, after membership is created | /organization | Proposal; membership rule preserved |
 
 - **As built**: `NotificationPanel.tsx:5` reads sample data; no table exists (REQ 1.21). **Open**: channels beyond in-app; default in-app only (O84). **Target**: a notification's `job_id` must be in the same organisation (DATA_MODEL 4.10); `user_id` in the organisation is a service rule.

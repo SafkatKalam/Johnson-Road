@@ -134,7 +134,9 @@ erDiagram
 - **Target**: the open-invite unique index (organisation, lower email, where not accepted and not revoked) cannot test `expires_at`, because `now()` is not allowed in an index condition. Service rule: when an invite expires the service sets `revoked_at` (a daily job, or on the next invite to the same email), otherwise an expired invite would block a new one.
 - **Open**: when the service revokes expired invites. Owner: the user. Default: on the next invite to the same email, plus a daily job (O74).
 - **Open**: invite lifetime. Owner: the user. Default: 7 days (O69).
-- **Decided (FD14)**: pre-membership invitations go to the invited email, regardless of whether a users row exists. They do not create organisation notifications for non-members. Email provider and retry integration remain O38 implementation choices.
+<!-- Adrishikhar - 7 November 2026, 19:07 (Asia/Dhaka) · Provider selected
+Changed by: Codex. Decision: EMAIL-01 in PREREQUISITES.md; Resend selected by Adrishikhar Barua, implementation pending. -->
+- **Decided (FD14)**: pre-membership invitations go to the invited email, regardless of whether a users row exists. They do not create organisation notifications for non-members. Resend is selected by [EMAIL-01](PREREQUISITES.md); sending and retry integration remain O38 implementation work.
 - **Target**: onboarding creates `users` (if new), `organizations` and the owner membership in one database transaction, or nothing (REQ 1.13, 1.34, F11).
 - **Target**: the owner is created only by onboarding or by an owner's ownership transfer. An admin cannot create or promote an owner (service rule, fixes F12, REQ 1.35).
 - **Target**: transfer of ownership is one transaction made of two separate statements, in this order: first demote the old owner, then promote the new one. The partial unique index is not deferrable, so it is checked row by row, not at the end of the statement or at commit. A single UPDATE that swaps both roles, or promoting the new owner before demoting the old one, fails (the single-UPDATE case may also depend on row order). This order is a service rule and a test case (section 9).
@@ -164,7 +166,12 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 
 - **Target**: the client's file name never reaches a path (D4, REQ 4.50). `original_name` is text for screens only.
 - **Target**: a row can be `ready` only when size, checksum, length, resolution and frame rate are all filled (CHECK).
-- **Target**: a refused or half-written file is deleted and no `ready` row remains (D3, REQ 4.52, 4.53). Whether a `failed` row is kept as a record: **Open**, owner the user, default: keep the row with its `failure_code` and no file.
+<!-- Adrishikhar - 7 November 2026, 19:28 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Decision reference: FD15. Evidence: "fix" following the failed-upload history finding.
+Fix: replace the stale Open label with the approved failure/replay rules. Documentation only; runtime implementation pending.
+Verification: checked against LOW_LEVEL_DESIGN 6.1 and IMPLEMENTATION_PLAN F22; targeted consistency and Git whitespace checks. -->
+- **Decided (FD9/FD15)**: rejection before row insertion leaves no upload row. A confirmed failure after insertion but before the ready commit retains the `failed` row with its `failure_code` and idempotency key as immutable history; clean its exact temporary/promoted objects or schedule cleanup. Replaying that key returns `409 upload_retry_required` with the existing upload ID; a deliberate retry uses a fresh key and upload UUID. If the response disconnects after the ready commit, preserve the ready row and files; do not turn a successful upload into a failed one. For an interrupted writer, confirm it is inactive before recovery marks failure or cleans its files (FD7). See [LOW_LEVEL_DESIGN](LOW_LEVEL_DESIGN.md), section 6.1.
 - **Open**: allowed extensions are `mp4`, `mkv`, `avi` as the screen says; the real list is O18. Max size and length are O8 and live in `settings`, not in this table.
 <!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
 Requested/approved by: Adrishikhar Barua. Changed by: Codex.

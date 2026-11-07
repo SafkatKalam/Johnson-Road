@@ -564,6 +564,10 @@ From SCOPE section 7 (source: blueprint section 5).
 
 ## Open items
 
+<!-- Adrishikhar - 7 November 2026, 19:07 (Asia/Dhaka) · Provider selected
+Changed by: Codex. EMAIL-01 in PREREQUISITES.md records Adrishikhar Barua's Resend choice.
+Change: O38 provider selected; integration, retries and delivery verification remain pending. -->
+
 Owner for all: the user. Default is used until the user answers.
 
 | ID | Question | Default |
@@ -603,7 +607,7 @@ Owner for all: the user. Default is used until the user answers.
 | O35 | Other analytics (speed, density, queue length, turning, lane counts, peak hour) | Out of this version |
 | O36 | Annotated video on by default | On |
 | O37 | Who supplies the consented test videos | The user supplies short clips |
-| O38 | How member invitations are delivered | Invite email sent through the sign-in provider |
+| O38 | How member invitations are delivered | Provider selected: Resend (EMAIL-01, [prerequisites](PREREQUISITES.md)); sending integration, retry and delivery handling remain open |
 | O39 | Plan limit values | Show plan name only until limits are defined |
 | O40 | Job left `running` after a restart | Mark `failed`, retryable |
 | O41 | Pages call Supabase directly in five files (breaks "services only") | Leave until real login is built (Sprint 1), then move the calls into an auth service |
