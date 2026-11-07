@@ -4,7 +4,7 @@ Version: 0.1 · Date: 2026-11-07 · Status: **draft, awaiting approval**
 
 How the backend, the AI pipeline and the frontend wiring are built, step by step. Builds on SCOPE v0.4 (approved), REQUIREMENTS v0.3, ARCHITECTURE v0.2, DATA_MODEL v0.3 and `schema.sql`, and reuses their IDs (1.x to 6.x, AC-, NFR-, FR-, D1 to D5, F1 to F14, GAP-, O1 to O76, table names, invariant numbers).
 
-> **Nothing here has been run.** No code, SQL, request or test was executed. "As built" means read in the code, with file and line. Every function name, path, request and response below is new design unless tagged As built. Where I could not verify something, the line says so.
+> **Verification status:** static document/schema consistency checks and small counting-rule simulations have run. They do not validate backend behavior, decoder adapters or PostgreSQL execution, which remain untested. As-built claims are source observations unless explicitly marked otherwise. Approved FD decisions override earlier proposals; unapproved choices remain open.
 
 **Tag key** (one tag per line or table row, never mixed): **As built** = verified in code, file and line, read not run. **Target** = design for later, from the blueprint or earlier docs. **Proposal** = my suggestion, needs the user's approval. **Open** = the user has not decided; owner the user; a default is given.
 
@@ -107,10 +107,13 @@ How the backend, the AI pipeline and the frontend wiring are built, step by step
 - **Proposal**: one exception `AppError(code, http_status, message, diagnostic_id=None, details=None)` and three handlers: `AppError`, request validation (`invalid_input`, 422) and any other exception (`internal_error`, 500, fresh `diagnosticId`).
 - **Proposal**: `diagnosticId` is set for every 5xx and every job failure; the raw exception and stack go to the log under it and nowhere else (NFR-9, REQ 4.33). `message` always comes from the catalogue (section 14); `str(exc)` is never copied into it (today it is: `upload_service.py:133`). `details` only for input errors (field, limit), never a path.
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD20: distinguish HTTP request identity from job identity. Documentation decision; implementation pending. -->
 ### 3.3 Request id and correlation id (NFR-11)
 
 - **Proposal**: middleware accepts `X-Request-Id` matching `[A-Za-z0-9-]{8,64}` or makes a uuid, keeps it in a context variable, returns it on every response, writes it to `audit_events.request_id`.
-- **Proposal**: `create_job` stores the request id in the `job_created` audit row; the worker puts `job_id` and that request id on every log line of the job. **Target**: one id travels API to job to worker (blueprint section 12).
+- **Decided (FD20)**: `request_id` identifies one HTTP attempt (returned by the API); `job_id` identifies the durable job across attempts. `job.created` audit records both. Worker logs carry `job_id`, `attempt_no` and the original creation `request_id`; retry/cancel HTTP calls get their own request IDs and audit links to the same job. Requests without jobs omit `job_id`. The worker resolves the creation request ID from that immutable audit record; no job ID is invented for sign-in or project requests.
 
 ### 3.4 Logging
 
@@ -118,9 +121,12 @@ How the backend, the AI pipeline and the frontend wiring are built, step by step
 - **Proposal**: `core/logging.py` configures logging once per process: one JSON object per line with `time, level, logger, message, request_id, job_id, org_id, user_id, route, status, duration_ms`. A redaction filter masks keys `authorization, token, password, secret, key, cookie` and bearer-looking values; client file names are logged only as the generated id (NFR-7). Existing logger names stay.
 - **Open**: metrics product (NFR-16). No default (O47).
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD16: define list envelopes and adapter boundaries. Documentation decision; implementation pending. -->
 ### 3.5 Pagination, ids, time
 
-- **Proposal**: list routes take `limit` (default 25, max 100) and an opaque `cursor`, and return `{ "items": [...], "nextCursor": "..." | null }`. The frontend services unwrap `items`, so types keep returning arrays.
+- **Decided (FD16)**: new and migrated list endpoints take `limit` (default 25, max 100) and an opaque `cursor`, returning `{ "items": [...], "nextCursor": string | null }`. All list rows below use this envelope, even when abbreviated. Frontend services unwrap items only at their boundary and preserve the cursor for paginated callers. Explicit legacy responses in 5.1 remain exceptions until migration; dashboards/analytics are object responses, not lists.
 - **Target**: ids are uuids made by the database, sent as strings. Times are `timestamptz`, UTC, sent as ISO 8601 with `Z`; recorded camera date and times are plain `date` and `time` (O68).
 - **Proposal**: display strings the types ask for (`startedAt`, `time`, `duration`) are made in the frontend services; `eta` and `currentFrame` are made in the backend (5.4).
 
@@ -135,6 +141,9 @@ How the backend, the AI pipeline and the frontend wiring are built, step by step
 - **Proposal**: `verify_token(raw) -> TokenClaims` checks signature, expiry, issuer, audience (30 seconds clock tolerance); reads `sub` (becomes `users.auth_subject`) and `email`. Any failure is `401 invalid_token`. Library default `PyJWT`, not in `requirements.txt`. The key document is cached 10 minutes and refetched once on an unknown key id; if the fetch fails with no cache the answer is `503 auth_unavailable`, never "accepted".
 - **Open**: verified email before first login (O11 default yes). The claim that carries it: not verified.
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD16: allow profile edits before organisation membership. Documentation decision; implementation pending. -->
 ### 4.2 The principal and the dependency
 
 ```python
@@ -145,7 +154,7 @@ class Principal:      # Proposal
 ```
 
 - **Proposal**: dependency `current_principal` does AC-12 checks 1 and 2 (token; find or create user; find the one membership). Routes add `Depends(require(Action.X))` for check 4. Check 3 sits inside every repository call. No route builds its own check, so none can skip one (ARCHITECTURE 9.2).
-- **Proposal**: `GET /api/me`, `POST /api/onboarding`, `POST /api/invites/accept` use `current_user_only` (no organisation needed); every other route returns `403 onboarding_required` when `org_id` is `None`.
+- **Decided (FD16)**: `GET /api/me`, `PATCH /api/me`, `POST /api/onboarding` and `POST /api/invites/accept` use `current_user_only` (valid sign-in, no organisation required). Public `/health` and `/` are separate exceptions. Other protected routes require membership and return `403 onboarding_required` when none exists.
 
 ### 4.3 Organisation scoping in every repository call
 
@@ -189,6 +198,8 @@ class Principal:      # Proposal
 - **Proposal**: `onboard(user, org_name, full_name)` in one transaction: insert organisation (slug from the name plus a short random suffix), insert owner membership, set `users.full_name`, write audit `organization.created`; any failure rolls back all. A user who already has a membership gets `409 already_member` (O67). This replaces the three Supabase writes (`OnboardingPage.tsx:36,48,63`) and fixes F11.
 - **Open**: suspended users. Default: `403 account_suspended` at step 2.
 
+- **Decided (FD14)**: pre-membership invitations are delivered by email, not organisation notifications. The sender must be able to retry delivery; no claim of delivered email is made until the provider accepts it. Provider integration and durable retry mechanism remain O38 implementation work. Membership-scoped notification rules remain unchanged.
+
 ### 4.7 Fixing F12 inside the backend
 
 - **Target**: `change_role` and `invite` refuse role `owner` from any caller (`409 owner_role_reserved`); `transfer_ownership` is owner-only and runs two statements in one transaction, demoting the old owner first, then promoting the new one (DATA_MODEL 4.2); demote, suspend or remove of the last owner is refused (`409 last_owner`, invariant 2).
@@ -196,16 +207,19 @@ class Principal:      # Proposal
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD16/FD17: reconcile accepted API contracts and report regeneration. Documentation decision; implementation pending. -->
 ## 5. API design
 
-All paths are `/api/...`. Every new path is a **Proposal** (ARCHITECTURE section 7: REQUIREMENTS 4B names no paths). Field names are camel case and follow `frontend/src/types/*` (REQ 4.36). Auth: `P` public, `U` any signed-in user, `R` any member, otherwise the roles listed.
+All paths are `/api/...`. Paths remain proposals except where an approved FD decision explicitly defines them. Approval of a contract does not claim implementation. Field names use camel case; FD2 and FD16 document intentional response changes. Auth: `P` public, `U` any signed-in user, `R` any member, otherwise the roles listed.
 
 ### 5.1 Existing routes: stay, change, go (O56 default: old routes keep working)
 
 | Existing route (As built) | Plan | Tag |
 |---|---|---|
 | `GET /health`, `GET /` (`main.py:39-55`) | Stay, public; `/health` adds `databaseReady`, `workerReady` | Target |
-| `GET /api/dashboard`, `/api/projects`, `/{id}`, `/{id}/videos`, `/{id}/reports`, `/location-suggestions` (`routers/projects.py:14-37`) | Stay with the same shapes; real data from Sprint 2 (dashboard Sprint 5) | Target |
+| `GET /api/dashboard`, `/api/projects`, `/{id}`, `/{id}/videos`, `/{id}/reports`, `/location-suggestions` (`routers/projects.py:14-37`) | URLs stay. Dashboard migrates to FD2 countsByMethod; list routes migrate to FD16 envelopes with their consumers. Detail responses keep unrelated fields. These are explicit contract changes, not unchanged-shape promises | Decided contracts; wiring pending |
 | `GET /api/uploads` (`routers/uploads.py:14-17`) | Stays, same response (`files`, `locationSuggestions`); `files` empty by default | Proposal |
 | `POST /api/uploads` (saves and creates the job, `:20-33`) | Works unchanged until the frontend moves; then becomes upload-only. Default: keep until moved (O56) | Open |
 | `GET /api/processing` (`routers/processing.py:11-14`) | Stays with the `ProcessingResponse` shape, built from job rows (closes GAP-7) | Target |
@@ -221,10 +235,10 @@ All paths are `/api/...`. Every new path is a **Proposal** (ARCHITECTURE section
 | `POST /api/onboarding` | U | `{ organizationName, fullName? }` | `{ user, organization, role }` 201 | 409 `already_member` | 1.34 |
 | `PATCH /api/me` | U | `{ fullName?, avatarUrl? }` | `{ user }` | 422 | 1.26 |
 | `GET`/`PATCH /api/organization` | R / owner, admin | `{ name }` | `{ id, name, slug, plan, memberCount }` | 403, 422 | 1.31 |
-| `GET /api/organization/members` | R | none | `{ items: [{ userId, email, fullName, role, status }] }` | | 1.15 |
+| `GET /api/organization/members` | R | limit, cursor | `{ items: [{ userId, email, fullName, role, status }], nextCursor }` | | 1.15 |
 | `PATCH`/`DELETE /api/organization/members/{userId}` | owner, admin | `{ role?, status? }` | member / 204 | 403, 409 `owner_role_reserved`, `last_owner` | 1.35 |
 | `POST /api/organization/transfer-ownership` | owner | `{ toUserId }` | 204 | 403, 404 | 1.35 |
-| `POST`/`GET /api/organization/invites`, `DELETE .../{id}` | owner, admin | `{ email, role }` (`admin` or `researcher`) | `{ id, email, role, expiresAt }` 201 | 409 `invite_exists`, `owner_role_reserved` | 1.16 |
+| `POST`/`GET /api/organization/invites`, `DELETE .../{id}` | owner, admin | `{ email, role }` (`admin` or `researcher`) | POST: `{ id, email, role, expiresAt }` 201; GET: `{ items, nextCursor }`; DELETE: 204 | 409 `invite_exists`, `owner_role_reserved` | 1.16 |
 | `POST /api/invites/accept` | U | `{ token }` | `{ organization, role }` | 404 `invite_not_found`, 410 `invite_expired`, 409 `already_member` | 1.16 |
 
 - **Proposal**: invite token = 32 random bytes shown once in the link, only its hash stored (DATA_MODEL section 1). Delivery is O38; lifetime 7 days (O69).
@@ -235,11 +249,12 @@ All paths are `/api/...`. Every new path is a **Proposal** (ARCHITECTURE section
 | Method and path | Auth | Request | Response | Errors | Req |
 |---|---|---|---|---|---|
 | `POST /api/projects` | `PROJECT_WRITE` | `{ name, location?, description?, defaultOptions? }` | `Project` 201 | 409 `project_name_taken` | 2.2 |
-| `GET /api/projects?search=&archived=` | R | | `Project[]` | | 2.5 |
+| `GET /api/projects?search=&archived=&limit=&cursor=` | R | | `{ items: Project[], nextCursor }` | | 2.5, FD16 |
 | `PATCH /api/projects/{id}`, `POST .../archive` | `PROJECT_WRITE` | `{ name?, location?, description? }` | `Project` | 404, 409 | 2.2 |
-| `GET /api/projects/{id}/jobs` | R | | `{ items: JobQueueItem[] }` | 404 | 4.12 |
-| `POST /api/projects/{id}/uploads` | `UPLOAD_WRITE` | multipart `file`, optional `cameraId, roadName, recordedDate, recordedStartTime, recordedEndTime, weather, notes`; header `Idempotency-Key` | `UploadDetail` 201 | 413, 415, 422, 409 | 4.13 |
+| `GET /api/projects/{id}/jobs` | R | | `{ items: JobQueueItem[], nextCursor }` | 404 | 4.12 |
+| `POST /api/projects/{id}/uploads` | `UPLOAD_WRITE` | multipart file and FD4 metadata; required `Idempotency-Key` | `UploadDetail` 201 (200 on ready replay) | 413, 415, 422; 409 `upload_in_progress`, `upload_retry_required`, `idempotency_conflict`; 410 `source_unavailable` | 4.13, FD15 |
 | `GET`/`DELETE /api/uploads/{id}` | R / `UPLOAD_WRITE` | | `UploadDetail` / 204 | 404, 409 `upload_in_use` | 4.14 |
+| `PATCH /api/uploads/{id}` | `UPLOAD_WRITE`, same organisation | Allowed metadata fields only (FD4) | `UploadDetail` | 404, 409 `upload_not_ready` / `metadata_locked`, 422 | FD4 |
 | `GET /api/uploads/{id}/preview` | R | | image bytes (one real frame) | 409 `upload_not_ready` | 2.44 |
 | `POST /api/uploads/{id}/configurations` | `CONFIG_WRITE` | `ConfigurationInput` | `ConfigurationDetail` 201 | 404, 422 | 4.15 |
 | `GET /api/configurations/{id}` | R | | `ConfigurationDetail` | 404 | 4.15 |
@@ -258,33 +273,41 @@ All paths are `/api/...`. Every new path is a **Proposal** (ARCHITECTURE section
 
 | Method and path | Auth | Request | Response | Errors | Req |
 |---|---|---|---|---|---|
-| `POST /api/jobs` | `JOB_CREATE` | `{ uploadId, configurationId }`, header `Idempotency-Key` | `JobDetail` 201 (200 on repeat) | 404, 409 `upload_not_ready`, 422 `no_line_or_zone` | 4.16, 2.49 |
-| `GET /api/jobs?status=&projectId=` | R | | `{ items: JobQueueItem[] }` | | 4.17 |
+| `POST /api/jobs` | `JOB_CREATE` | `{ uploadId, configurationId }`, header `Idempotency-Key` | `JobDetail` 201 (200 on repeat) | 404, 409 `upload_not_ready`, 410 `source_unavailable`, 503 `storage_unavailable`, 422 `no_line_or_zone` | 4.16, 2.49 |
+| `GET /api/jobs?status=&projectId=` | R | | `{ items: JobQueueItem[], nextCursor }` | | 4.17 |
 | `GET /api/jobs/{id}` | R | | `JobDetail` | 404 | 3.39 |
-| `GET /api/jobs/{id}/events?after=` | R | | `{ items: LogEntry[] }` | 404 | 3.6 |
+| `GET /api/jobs/{id}/events?after=` | R | | `{ items: LogEntry[], nextCursor }` | 404 | 3.6 |
 | `POST /api/jobs/{id}/cancel`, `/retry`, `/rerun` | `JOB_CANCEL` / `JOB_RETRY` / `JOB_CREATE` | | `JobDetail` | 404, 409 `job_not_cancellable`, `job_not_retryable`, `job_not_finished` | 3.7, 3.10, 3.36 |
 
 - **Proposal**: `JobDetail` = `JobQueueItem` (`types/processing.ts:4-19`) plus `ProcessingJob` fields (`:21-31`) plus `uploadId, configurationId, attempt, errorCode, safeMessage, diagnosticId, isRetryable, cancelRequested, finishedAt`.
 - **Proposal**: `gpu`, `cpu`, `memory` return `0` until a source exists (O25); screens hide them when `0`. `vehicleCount` has no source while running (DATA_MODEL 5b): returned `0` until `completed`, and the page shows it only then; shown during a run, `0` would mislead.
-- **Proposal**: `eta` is `"Queued"`, `"In progress"`, `"12 min"` (from frames and `processing_fps`), `"Done"` or `"—"` (the strings screens use today, `upload_service.py:49,81,98`); `currentFrame` is `"<frames_done>/<frames_total>"`. Pause is not offered (O30).
+- **Proposal**: `eta` is `"Queued"`, `"In progress"`, `"12 min"` (from frames and `processing_fps`), `"Done"` or `"—"` (the strings screens use today, `upload_service.py:49,81,98`); `currentFrame` is `"<frames_done>/<frames_total>"`, or `"<frames_done>/unknown"` while the estimate is unavailable (FD13). Pause is not offered (O30).
 
+<!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD2: specify method-filtered analytics and separate count groups. Documentation correction; runtime implementation pending. -->
 ### 5.5 Results, evidence, reports, dashboard, notifications
 
 | Method and path | Auth | Request | Response | Errors | Req |
 |---|---|---|---|---|---|
 | `GET /api/jobs/{id}/result` | R | | `ResultDetail` | 409 `job_not_completed` | 4.19 |
-| `GET /api/jobs/{id}/result/buckets?class=&direction=&lineId=&zoneId=` | R | | `{ items: Bucket[] }` | 409 | 3.20 |
-| `GET /api/jobs/{id}/artifacts`, `GET /api/artifacts/{id}/content` | R | | list / stream or `302` to a short link | 410 `artifact_deleted` | 4.20 |
+| `GET /api/jobs/{id}/result/buckets?class=&direction=&lineId=&zoneId=` | R | | `{ items: Bucket[], nextCursor }` | 409 | 3.20 |
+| `GET /api/jobs/{id}/artifacts`, `GET /api/artifacts/{id}/content` | R | | `{ items, nextCursor }` / stream or `302` to a short link | 410 `artifact_deleted` | 4.20 |
 | `POST /api/reports` | `REPORT_WRITE` | `{ jobId, reportType, options? }` | `ReportDetail` 201 (200 on repeat) | 409 `job_not_completed` | 3.19, 3.22 |
-| `GET /api/reports?projectId=&type=&from=&to=`, `/{id}` | R | | `{ items: ProjectReport[] }` | | 3.20 |
+| `POST /api/reports/{id}/regenerate` | `REPORT_WRITE` | No body; source report identifies the generation | `ReportDetail` 201 (200 for existing successor) | 404, 409 `job_not_completed` | FD17 |
+| `GET /api/reports?projectId=&type=&from=&to=`, `/{id}` | R | | List: `{ items: ProjectReport[], nextCursor }`; detail: `ReportDetail` | | 3.20 |
 | `GET /api/reports/{id}/export?format=csv\|pdf` | `REPORT_EXPORT` | | file | 422 `format_not_supported` | 3.21 |
-| `GET /api/reports/analytics?projectId=&from=&to=`, `GET /api/dashboard?range=` | R | | `ReportAnalytics`, `DashboardData` | | 3.13 |
-| `GET /api/notifications?unread=`, `POST .../{id}/read`, `POST .../read-all` | R | | `{ items }` / 204 | 404 | 3.11 |
+| `GET /api/reports/analytics?projectId=&from=&to=&method=`, `GET /api/dashboard?range=&method=` | R | Optional `method`: `line_crossing` or `zone_presence` | `ReportAnalytics` / `DashboardData` with `countsByMethod` (below) | 422 `invalid_method` | 3.13, FD2 |
+| `GET /api/notifications?unread=&limit=&cursor=`, `POST .../{id}/read`, `POST .../read-all` | R | | `{ items, nextCursor }` / 204 | 404 | 3.11, FD16 |
 
-- **Proposal**: `ResultDetail` has `method: "line_crossing"`, `isEstimate: true`, `confidenceMean`, `vehiclesCounted`, `framesProcessed`, `modelName`, `modelFileSha256`, `codeVersion`, `configurationVersion`, `bucketSeconds`, `timeBase` (R2, REQ 3.23).
-- **Proposal**: Dashboard and analytics keep their existing keys; fields with no source (`aiInsights`, `aiTimeline`, `quickActions`, `segmentDetails`, `insightDetails`, DATA_MODEL 5b) return empty arrays or objects and the screens show empty states. **Open**: Excel and share link are not offered (O31).
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Support both approved counting modes. Documentation decision; runtime implementation pending. -->
+- **Decided (FD1–FD2)**: `ResultDetail.method` is `line_crossing` or `zone_presence`; retain `isEstimate: true`, confidence, `vehiclesCounted`, frames, model/hash, code/configuration version, bucket length and time base. Label counts by method, never as unique vehicles.
+- **Decided (FD2)**: both responses include `countsByMethod`, an array of `{ method, label, total, trafficVolumeByHour, vehicleClassBreakdown, weeklyTrafficTrend, peakHours }`. Each series uses the existing point fields but contains only that method's selected buckets. Without a method filter, return one group per method (zero total and empty series when no data); with a valid filter, return only that group. Labels are Line crossing count and Zone presence count. Do not return combined top-level count totals or count series. A legacy scalar adapter must request a method and retain its label; it cannot sum groups. Non-count fields retain their meanings. Frontend type/service adaptation is required and remains unimplemented.
+- **Proposal**: fields with no source (`aiInsights`, `aiTimeline`, `quickActions`, `segmentDetails`, `insightDetails`, DATA_MODEL 5b) return empty arrays or objects and screens show empty states. **Open**: Excel and share link are not offered (O31).
 
-### 5.6 Examples (Proposal; typed to `frontend/src/types/*`)
+### 5.6 Examples (illustrative subsets; not complete response fixtures)
 
 **A. Onboarding** `POST /api/onboarding`
 
@@ -337,11 +360,14 @@ All paths are `/api/...`. Every new path is a **Proposal** (ARCHITECTURE section
 
 ```json
 { "items": [{ "bucketIndex": 0, "bucketStartSeconds": 0, "vehicleClass": "car", "direction": "forward",
-              "lineId": "a7c2...", "zoneId": null, "vehicleCount": 41, "confidenceMean": 0.71 }] }
+              "lineId": "a7c2...", "zoneId": null, "vehicleCount": 41, "confidenceMean": 0.71 }], "nextCursor": null }
 ```
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:45 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD9: validate metadata before publishing upload success. Design correction; backend implementation pending. -->
 ## 6. Upload flow in detail
 
 ```mermaid
@@ -352,43 +378,61 @@ sequenceDiagram
     participant DB as PostgreSQL
     FE->>API: POST /api/projects/{id}/uploads (multipart, token)
     API->>API: token, organisation, role, project belongs (AC-12)
-    API->>DB: insert uploads row status=receiving
+    API->>DB: lookup idempotency key; replay/status response if found
+    Note over API,DB: following transfer steps apply only to a new key
+    API->>API: validate all metadata and read bounded container prefix
+    API->>API: validate filename extension against detected container; generate final key
+    API->>DB: insert receiving with unique key; race loser follows existing-row status
     loop each 1 MB piece
         API->>ST: write piece to temporary key, update SHA-256 and byte count
         API->>API: over the size limit? stop and clean up
     end
     API->>API: check first bytes, open with video reader, read size, length, fps, frames
-    API->>ST: move to final key, write one preview frame
+    API->>API: finish validation of all multipart fields before promotion
+    API->>ST: promote to final key, write one preview frame
     API->>DB: one transaction: details, checksum, status=ready, audit, notification
     API-->>FE: 201 UploadDetail
-    Note over API,ST: any failure: delete temporary file, row status=failed with failure_code, error shape
+    Note over API,ST: failure before ready commit: clean exact temporary/promoted objects; mark failed if row exists
+    Note over API,DB: after ready commit, a response disconnect does not undo success; repeat key returns ready upload
 ```
 
+<!-- Adrishikhar - 7 November 2026, 18:05 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: clarify FD19 ordering: prefix inspection before streaming, full reader validation afterward.
+Evidence: "okay fix this and give final 5 checks". Documentation only; runtime verification pending. -->
 | # | Step | Detail | Tag |
 |---|---|---|---|
-| 1 | Pre-checks | Role and project first. `Content-Length` over the limit gives `413` at once (the header can lie; step 3 is the real check) | Proposal |
-| 2 | Name (D4) | Key is `<uuid>.<ext>`; `ext` from the allowed list and the container found in step 5, never from client text. `original_name` = client name with directory parts, drive letters and control characters removed, trimmed, cut to 120 characters, empty becomes `video` | Target |
-| 3 | Streaming write (D3) | Read 1 MB pieces, write to `sources/tmp/<uuid>.part`, keep a running SHA-256 and byte count; when the count passes `MAX_VIDEO_SIZE` stop, delete the part, answer `413 file_too_large`. Memory stays at one piece. Replaces `buffer.write(file.file.read())` (`upload_service.py:32`) | Target |
-| 4 | Extension | Not in `ALLOWED_VIDEO_EXTENSIONS`: `415 unsupported_type` before storing | Target |
-| 5 | Content check | First 32 bytes: MP4 family has `ftyp` at bytes 4 to 8; Matroska starts `1A 45 DF A3`; AVI starts `RIFF` with `AVI ` at 8 to 12. No match: `415`, file deleted | Proposal |
-| 6 | Real reader | Open with the reader (O77): frames, frame rate, width, height; duration = frames / rate. Cannot open or zero frames: `422 unreadable_video` | Target |
-| 7 | Length | Over `MAX_VIDEO_LENGTH`: `422 video_too_long`; unit is O8 | Open |
-| 8 | Preview | Decode one frame (position O85), JPEG to `sources/previews/<uuid>.jpg`, key in `preview_frame_key` | Proposal |
-| 9 | Commit | Move part to `sources/<uuid>.<ext>`; update row to `ready` with every detail (CHECK, invariant 21); audit; notification | Target |
-| 10 | Notes | Text trimmed and cut (200; notes 2000); times before `24:00` (invariant 30, O75) else `422 invalid_time` | Target |
+| 1 | Pre-checks | Check role, organisation and project. Reject an oversized declared Content-Length; also enforce actual streamed bytes | Target |
+| 2 | Metadata (FD9) | Validate supplied dates, times and text before a ready transition. Trim text using documented limits (200; notes 2000); reject invalid times with 422 invalid_time. If multipart fields arrive later, buffer only within request limits and finish their validation before step 8 | Decided |
+| 3 | Filename and prefix inspection (FD19) | Require a case-insensitive final filename extension from the allowed list; x.exe is rejected even if it contains video. Inspect bounded container bytes and reject a disallowed container or filename/container mismatch with unsupported_type. Generate the intended stored extension from the detected container; client text never forms a path. Full reader confirmation occurs at step 6, after streaming; prefix inspection alone cannot authorize promotion | Decided; reader choice O77 |
+| 4 | Receiving row | Resolve the organisation-scoped idempotency key (FD15); only a new key creates a UUID, generated storage key and receiving row. Clean original name for display only. Failure before insertion leaves no row | Target |
+| 5 | Streaming write | Write buffered prefix and remaining bytes exactly once to sources/tmp/&lt;upload-uuid&gt;.part in bounded chunks; hash/count all bytes and enforce actual size | Target |
+| 6 | Real reader and length | Open the fully streamed temporary file with the reader. Confirm the allowed container agrees with step 3 before promotion; a mismatch returns unsupported_type. Validate readable nonempty video and measured properties; enforce configured duration limit. Failure returns unreadable_video or video_too_long. Units and limits remain O8 | Target |
+| 7 | Preview preparation | Prepare one real preview frame (O85) using generated preview key; no ready state or success notification yet | Target |
+| 8 | Validation gate | All metadata, content, size, duration and preview checks must have passed before promotion or commit. Later multipart fields cannot bypass this gate | Decided, FD9 |
+| 9 | Promote and commit | Promote temporary source; in one database transaction save validated metadata and measured details, set ready, insert audit and notification. On pre-commit failure clean exact created objects or schedule orphan cleanup (FD3/FD6) | Target |
+| 10 | Response | Return 201 only after commit. A lost response after commit does not mark the upload failed; a repeat idempotency key returns the committed row | Decided, FD9 |
 
 - **Open**: reader library, default OpenCV headless, not in `requirements.txt` and not tried on this machine (O77). Upload transport, default one streamed request per file, no resumable upload (O86).
-- **Proposal**: one file per request; the wizard sends files one after another so each has its own progress and Retry (REQ 2.42). The transfer holds a web thread for its duration; a background upload is not designed.
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Remove unsafe multi-video configuration reuse. Documentation decision; runtime implementation pending. -->
+- **Decided (FD8)**: one video per workflow and request. Separate videos use independent workflows and configurations; no copying coordinates across videos.
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD15: make failed, receiving and ready replay behavior explicit. Documentation decision; implementation pending. -->
 ### 6.1 Failure, cleanup, retry
 
 | Failure | Left behind | User sees | Tag |
 |---|---|---|---|
-| Over limit, wrong type, unreadable, too long | Row `failed` with `failure_code` (DATA_MODEL default), no file | Message of section 14 | Target |
-| Connection dropped | `finally` deletes the part file, row `failed` `upload_interrupted` | Retry button | Proposal |
-| API killed mid-upload | Part file and `receiving` row | After 1 hour the cleanup job deletes it and sets `failed` (12) | Proposal |
-| Same request twice | `Idempotency-Key` (unique per organisation) returns the first row with 200 | One upload (REQ 4.39) | Proposal |
+| Over limit, wrong type, unreadable, too long or invalid metadata | Before insertion: no row. After insertion but before ready commit: failed row with failure_code; exact created files cleaned or scheduled for cleanup | Specific rejection; no success notification | FD9/FD15 |
+| Connection dropped | Before ready commit: fail existing receiving row and clean its files. After ready commit: preserve ready row and files | Repeat key to discover committed outcome; new key only after confirmed failure | FD9/FD15 |
+| API killed mid-upload | Part file and `receiving` row | Cleanup confirms the upload is inactive before deleting its exact temporary key and marking it failed; age alone is insufficient (FD7) | Decided |
+| Same idempotency key | Ready: return 200 with existing upload, provided source remains available. Receiving: 409 upload_in_progress, never start a second writer. Failed: 409 upload_retry_required with existing upload ID | Check existing upload status; failed retry starts a new upload with a fresh key | Decided, FD15 |
 | Same file again (same checksum) | New row; response carries `duplicateOf` | Warning only (DATA_MODEL 4.4) | Open |
+
+- **Decided (FD15)**: lookup the key scoped to the authenticated organisation before starting storage writes; require the requested project to match the stored upload or return `409 idempotency_conflict`. A key identifies one selected file and metadata payload; changed selections always use a new key. A unique-key race loser reads the winner and applies the same status rules. If a request failed before row insertion, the same key may start a new transfer. After an unknown network outcome, reuse the key to discover status; do not create a second upload. A confirmed failed row is immutable history: deliberate Retry uses a fresh key and generated upload UUID. A receiving row becomes retryable only after the original writer is stopped or recovery confirms it inactive. Removed sources return `410 source_unavailable`; infrastructure lookup failures return `503 storage_unavailable`.
 
 ### 6.2 Storage interface (O3)
 
@@ -397,11 +441,15 @@ class Storage(Protocol):   # Proposal; Area = "sources" | "outputs"
     def put_stream(self, area, key, chunks) -> StoredObject: ...   # size, sha256
     def open_read(self, area, key) -> BinaryIO: ...
     def local_path(self, area, key) -> Path: ...                   # worker; S3 downloads to a temp file
+    def promote(self, area, temporary_key, final_key) -> None: ... # local rename or object copy/delete
     def delete(self, area, key) -> None: ...
     def signed_url(self, area, key, seconds) -> str | None: ...    # S3 only
 ```
 
-- **Proposal**: `LocalStorage` writes under `STORAGE_ROOT/<area>/<key>` and refuses a key containing `/`, `\` or `..` or not matching `[0-9a-f-]{36}\.(mp4|mkv|avi|jpg)` (D4 defence in depth). `S3Storage` uses one bucket per area; library not chosen (not in `requirements.txt`).
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Allow legitimate nested storage keys while rejecting traversal. Documentation decision; runtime implementation pending. -->
+- **Decided (FD3)**: storage accepts only the generated source, preview, attempt-artifact and report-export key patterns in section 18. Validate category, canonical UUIDs, extension and resolved root containment, including symlinks/reparse points. Never use client filenames as keys. S3 uses the same logical keys in separate source/output buckets.
 - **Target**: the database holds the key only, never a machine path; sources and outputs are separate (NFR-4, AC-17). **Proposal**: local files stream through the API after the same checks; S3 hands out a link valid `SIGNED_LINK_SECONDS`.
 - **Open**: link lifetime. Default 5 minutes (O82).
 
@@ -413,7 +461,7 @@ class Storage(Protocol):   # Proposal; Area = "sources" | "outputs"
 
 | Rule | Error code | Tag |
 |---|---|---|
-| Upload exists, is `ready`, in the caller's organisation | `404 not_found`, `409 upload_not_ready` | Target |
+| Upload exists, is ready, in caller organisation, source not deleted and available (FD21) | 404 not_found, 409 upload_not_ready, 410 source_unavailable, 503 storage_unavailable | Decided |
 | Every coordinate 0 to 1 inclusive; a line's two points differ (invariant 13) | `422 coordinates_out_of_range`, `line_too_short` | Target |
 | Zone has at least 3 points (invariant 14); edges do not cross each other (my addition) | `422 zone_too_few_points`, `zone_self_crossing` | Proposal |
 | `direction` is `forward`, `backward` or `both` | `422 invalid_direction` | Target |
@@ -423,7 +471,7 @@ class Storage(Protocol):   # Proposal; Area = "sources" | "outputs"
 | `confidenceThreshold` 0.10 to 0.95 (REQ 2.25) | `422 invalid_threshold` | Target |
 | `iouThreshold` 0.05 to 0.95, `frameSkip` 1 to 30, `batchSize` 1 to 32, `bucketSeconds` 60 to 3600 (ranges mine) | `422 invalid_option` | Proposal |
 
-- **Target**: the service writes a final value into every column (DATA_MODEL 4.5). `version_no` = previous maximum for the upload plus one, taken under a lock on the upload row so two saves give two numbers.
+- **Decided (FD11)**: resolve omitted or empty input `classes` to a nonempty explicit list of supported model class names at configuration save time; reject if defaults resolve empty or contain unsupported names. Persist that list, never a runtime-default sentinel. Retries/reruns use the saved list even if server defaults change; resolving defaults again requires a new configuration. The service writes a final value into every column (DATA_MODEL 4.5). `version_no` = previous maximum for the upload plus one, taken under a lock on the upload row so two saves give two numbers.
 - **Target**: a configuration is immutable once locked (invariants 11, 12). Going back in the wizard and changing something calls `new_version_from(config_id, changes)`, which copies zones, points and lines into a new version (`based_on_id`). **Proposal**: an unlocked configuration with no job is deleted after 7 days by the cleanup job (value mine).
 
 ### 7.2 Creating a job (`create_job`)
@@ -436,8 +484,9 @@ sequenceDiagram
     FE->>API: POST /api/jobs {uploadId, configurationId} + Idempotency-Key
     API->>DB: begin
     API->>DB: job with this (org, key) exists? return it, 200
-    API->>DB: upload (ready) and configuration (same upload), scoped to org
-    API->>DB: insert jobs status=queued (jobs_insert_trg); trigger locks the configuration
+    API->>DB: lock upload; validate ready, source not deleted, same-org configuration
+    API->>API: verify stored source exists; 410 if absent, 503 if storage unavailable
+    API->>DB: insert queued job with immutable metadata snapshot; trigger locks configuration
     API->>DB: audit job.created with request id
     API->>DB: commit
     API-->>FE: 201 JobDetail (status queued, queuePosition)
@@ -481,6 +530,9 @@ stateDiagram-v2
 - **Open**: the moves (O9). Default: these.
 - **Proposal**: the service raises the specific `409` before the trigger can; a trigger exception that still reaches the API is `500 internal_error` with a diagnostic id and is a bug. Cancelled jobs never keep partial results (REQ 3.38).
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD13: keep estimated totals compatible with SQL during progress updates. Documentation decision; implementation pending. -->
 ### 8.2 Worker loop
 
 ```mermaid
@@ -496,15 +548,16 @@ sequenceDiagram
         W->>E: run_analysis(input, on_progress, should_stop)
         loop each batch
             E-->>W: frames_done, frames_total, stage
-            W->>DB: progress, stage, fps, last_heartbeat_at; read cancel_requested_at
+            W->>DB: fenced progress, stage, fps; supervisor independently heartbeats and checks cancel
         end
         alt finished
             W->>ST: put artifacts into outputs
             W->>DB: one transaction: job_results, count_buckets, job_artifacts, job completed (100, finished_at), attempt completed, notification, audit
         else error
-            W->>DB: one transaction: job failed (code, safe message, diagnostic id, is_retryable), attempt failed
+            W->>DB: fenced transaction: job failed (code, safe message, diagnostic id, is_retryable), attempt failed, notification
         else stop requested
-            W->>DB: one transaction: job cancelled, attempt cancelled; delete partial outputs
+            W->>DB: fenced transaction: job cancelled, attempt cancelled, notification
+            W->>ST: clean only this attempt's partial outputs after commit
         end
     end
 ```
@@ -517,16 +570,26 @@ UPDATE jobs SET status='running', started_at=now(), last_heartbeat_at=now(), wor
 
 - **Target**: two workers cannot take one job (ARCHITECTURE 6.2). The `job_attempts` row commits with the claim, so the first log line already has its attempt (DATA_MODEL 4.6, FK on `job_events`).
 - **Target**: model name and file hash, device and code version are written after the model loads and before the first frame (REQ 5.25). **Proposal**: `code_version` comes from a `CODE_VERSION` environment value set at build, falling back to `unknown`.
-- **Proposal**: progress is written at most once per second; `progress_percent = floor(100 * frames_done / frames_total)` capped at 99 until completion. Each write also sets `last_heartbeat_at`; no separate heartbeat thread, because batches are small (default batch 1). How long a batch takes: not verified (O81).
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Separate worker liveness from frame processing. Documentation decision; runtime implementation pending. -->
+- **Decided (FD5)**: progress is written at most once per second and capped at 99 before completion. An independent supervisor maintains heartbeat during download, model loading, processing and storage. Progress is not the heartbeat. Every write checks job ID, attempt number, worker ID and running status.
+- **Decided (FD13)**: before a fenced progress write would make `frames_done` exceed its estimated `frames_total`, atomically set `frames_total = NULL` in the same update; keep it unknown for that attempt until verified EOF. The schema CHECK remains unchanged. With unknown total, keep percentage at its last value below 100, show frames done and no percentage-based ETA; never divide by NULL/zero. On clean completion set both frame counters to the observed processed-frame count in the result/status transaction and set progress to 100. Zero-frame input remains unreadable. Retry clears frames_total, processing_fps and last_heartbeat_at alongside existing resets.
 - **Proposal**: `job_events` lines: `attempt_started`, `video_opened`, one per stage change, one per 10 percent, `cancel_seen`, `finished` or `failed`. Fixed templates with numbers; no exception text, no path.
-- **Proposal**: cancel. A `queued` job goes straight to `cancelled`. A `running` job gets `cancel_requested_at` and `cancel_requested_by`, returns `cancelRequested: true`, stays `running` until the worker stops (at most one batch plus cleanup). **Open**: REQ 3.35 enables Cancel "only if the worker can stop safely"; default enabled whenever `should_stop` exists, which is always here.
+- **Decided (FD5)**: queued cancellation transitions directly to cancelled. Running cancellation records the request and remains running until supervisor-confirmed stop. The supervisor can terminate a blocked analysis process after the configured grace period; completion must recheck cancellation under the job lock.
 - **Target**: an engine failure becomes a short code and a diagnostic id; the raw text goes to the log only (REQ 5.19).
 
 ### 8.3 Timeouts and restart recovery
 
-- **Open**: timeout and retry values: no default (O46). **Proposal**: between batches the worker compares `now - started_at` with `timeout_seconds` (blank means off) and fails its own job `job_timeout`.
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Enforce deadlines even when the engine blocks. Documentation decision; runtime implementation pending. -->
+- **Open**: numerical timeout/retry settings remain O46/O81. **Decided (FD5)**: the supervisor checks deadlines and cancellation independently of batch execution; request cooperative stop, then terminate that attempt’s isolated analysis process after the configured grace period.
 - **Open**: job left `running` by a dead worker. Default: `failed`, retryable, code `worker_lost` (O40).
-- **Proposal**: recovery (12): `UPDATE jobs SET status='failed' ... WHERE status='running' AND last_heartbeat_at < now() - STALE_AFTER` plus its attempt row `failed`. A slow worker that wakes up finds its writes affect 0 rows, `should_stop` turns true, it discards its work. At worker start, jobs `running` with its own `worker_id` are failed at once.
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Fence stale attempts and serialize completion against recovery. Documentation decision; runtime implementation pending. -->
+- **Decided (FD5)**: recovery locks and rechecks the stale job and exact attempt before failing it. Worker IDs are unique per process start. Old-attempt writes cannot affect a newer attempt; completion locks and rechecks ownership and cancellation before publishing results. Recovery runs independently of analysis.
 
 ### 8.4 Concurrency
 
@@ -564,7 +627,10 @@ def run_analysis(inp: AnalysisInput, on_progress, should_stop, out_dir: Path) ->
 | Video loader | Checks the path exists (`video_loader.py:5-9`) | `open_video(path) -> VideoInfo(width, height, frame_rate, frame_count, duration_seconds)`; unreadable raises `EngineError("unreadable_video")` | Target |
 | Frame reader | `FrameBatch(source, frame_count=6)` (`frame_reader.py:8,12-13`) | `read_batches(path, batch_size, frame_skip)` yields `FrameBatch(frames, indices, times)` | Target |
 
-- **Target**: frames in order, only `batch_size` in memory (REQ 5.4, F4). **Proposal**: frame skip keeps frame `n` when `n % frame_skip == 0` (D3, REQ 5.14); time is `n / frame_rate` from the real index. `frames_total = ceil(frame_count / frame_skip)`; if the container misreports its count, the reader stops at the first failed read and progress is set to 100 on completion. How often MKV or AVI misreport: not verified.
+<!-- Adrishikhar - 7 November 2026, 17:45 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD10: distinguish clean end-of-video from decoding failure. Design correction; backend implementation pending. -->
+- **Decided (FD10)**: read ordered batches with bounded memory. Frame skipping keeps real index `n` when `n % frame_skip == 0`; time uses the documented video time base. The reader adapter must distinguish frame, clean end-of-stream and decoding/I/O error. A boolean failed-read alone is insufficient evidence of clean EOF; an ambiguous end fails as `unreadable_video`. Container frame count is only a progress estimate, not proof of EOF. Clamp progress below 100 until a verified clean end, aggregation and the completion transaction succeed. A mid-stream error fails the job and publishes no partial result or success report. A clean EOF with a different estimated count may succeed using observed frame counts. The reader-library choice remains O77; it must provide this distinction or the adapter must verify it.
 
 ### 9.3 Detector (D1)
 
@@ -583,6 +649,9 @@ def run_analysis(inp: AnalysisInput, on_progress, should_stop, out_dir: Path) ->
 - **Open**: how the real trackers are provided. Default: adapters over the trackers shipped with Ultralytics for ByteTrack and BoT-SORT, own small SORT; not verified against the installed version, so the second default is an own simple overlap tracker (O78).
 - **Proposal**: a track's class for counting is the class with most detections over its life (a track can flicker between `car` and `truck`).
 
+<!-- Adrishikhar - 7 November 2026, 17:45 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD12: discard stale crossing evidence after a wobble or reversed crossing. Design correction; backend implementation pending. -->
 ### 9.5 Counter: line crossing
 
 - **As built**: `Counter.count(tracks)` returns `len(tracks)` (`counter.py:6`); every function in `analytics.py` raises `NotImplementedError` (`:1-26`). **Target**: REQ 5.10, a vehicle counts once per line crossed, in the direction crossed, jitter does not count twice.
@@ -591,16 +660,19 @@ Lines and zones are stored 0 to 1; the counter converts to pixels (`x*width`, `y
 
 1. Signed distance: `d = ((B.x-A.x)*(P.y-A.y) - (B.y-A.y)*(P.x-A.x)) / length(A,B)`. With y growing downward, positive `d` is the right of the arrow as seen on screen. Check: `A=(0,0)`, `B=(100,0)`, `P=(50,20)` gives `d=20`, below the arrow, the right-hand side when facing along it.
 2. Side with a band: `side=+1` if `d > band`, `-1` if `d < -band`, otherwise keep the last confirmed side. The band (default 1 percent of the frame diagonal) is the jitter rule: a wobble inside it never changes side.
-3. Touch test: if the step from the previous point to `P` intersects the finite segment `A`-`B`, set `touched` for this track and line. This stops vehicles that pass beyond the end of the line from counting.
-4. When the confirmed side changes: `-1` to `+1` is a forward crossing, `+1` to `-1` backward (O66). If `touched`, the crossing is real and `touched` is cleared; if not, ignore it.
-5. Line `forward` counts forward crossings only, `backward` backward only, `both` counts either and records the actual direction (`count_buckets.direction` allows only `forward` or `backward`).
+3. Keep a pending crossing candidate for this track and line only within the current excursion from its confirmed side. A genuine crossing of the supporting infinite line replaces the candidate with its intersection point, direction and event time; record whether the intersection lies on the finite segment. Merely touching the line and returning is not a crossing. A reverse crossing replaces or invalidates earlier evidence, including while inside the band.
+4. Returning beyond the band to the original confirmed side clears the candidate even when the confirmed side did not change. On reaching the opposite confirmed side, count only if the latest candidate is on the finite segment and matches that transition (-1 to +1 forward, +1 to -1 backward). Then clear the candidate whether counted or rejected and update the confirmed side. An intersection outside the segment must replace earlier inside-segment evidence. This prevents a wobble followed by going around the endpoint from counting (FD12).
+5. Line `forward` counts forward crossings only, `backward` backward only, `both` counts either and records the actual direction. Line buckets use `forward` or `backward`; zone-only buckets use `not_applicable` (FD1).
 6. Once per line: a `(track, line)` pair counts at most once, at the first real crossing in an allowed direction. Another line counts the vehicle again.
 7. A track first seen inside the band takes its first confirmed side as its start and cannot cross at that moment.
-8. The count goes to the track's final class and to bucket `floor(time_s / bucket_seconds)` of the frame where the crossing was confirmed.
+8. The count goes to the track's final class and to the bucket of the confirmed crossing frame, as defined here; preserve that timestamp until class finalization. The pending intersection point supplies zone attribution. Zone-only events use their first-observation timestamp (FD1).
 9. A vehicle lost and picked up under a new id counts twice; the counter does not repair this. Counts are labelled estimates (R2).
 
 - **Proposal**: zones. Detections whose count point is outside every zone (ray-casting point-in-polygon in pixels) are dropped before tracking (ARCHITECTURE 5.3); with no zone the whole frame is used (O28).
-- **Open**: count point, band, once-per-line. Default as above (O79). **Open**: a job with a zone and no line: default counts distinct tracks seen in the zone, once each, but `count_buckets.direction` allows only `forward` or `backward` so such a count has no valid direction; a schema decision is needed (O80).
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Resolve zone-only counting and its missing direction value. Documentation decision; runtime implementation pending. -->
+- **Open**: count point, band and line-crossing geometry remain O79. **Decided (FD1, resolves O80)**: line configurations use line-crossing buckets; zone-only configurations count each track once per zone, including first-frame presence, with `direction=not_applicable`. Overlap, class finalization and bucket timing follow section 18.
 - **Proposal**: aggregation key `(bucket_index, vehicle_class, direction, line_id, zone_id)`; `vehicle_count` incremented; `confidence_mean` = mean confidence of the counted tracks; `bucket_start_s = bucket_index * bucket_seconds`. **Open**: bucket index counts from video start; labels shift by the recorded start time (O34).
 - **Proposal**: the seven `analytics.py` stubs are replaced by `aggregate_counts` and `peak_hours` (from buckets); speed, density, queue, turning, lane functions are deleted, not left raising (O35).
 
@@ -622,28 +694,34 @@ Lines and zones are stored 0 to 1; the counter converts to pixels (`x*width`, `y
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD17: define deterministic, server-assigned report regeneration. Documentation decision; implementation pending. -->
 ## 10. Results, reports and exports
 
 - **Target**: counts are written once, at completion, in the same transaction as `completed` (invariant 19). Reads use `count_buckets (result_id, bucket_index)` and `(job_id, vehicle_class)` (DATA_MODEL section 7).
 - **Proposal**: filters (`class`, `direction`, `lineId`, `zoneId`, bucket range) are query parameters (REQ 3.20). Totals shown are always `SUM(vehicle_count)` over the filtered rows, so a filter and a total cannot disagree; the header `vehicles_counted` is the unfiltered sum written at completion.
-- **Open**: a vehicle crossing two lines counts once per line (9.5), so a sum over lines counts it twice. Default: the headline `vehiclesCounted` is the highest single-line total when more than one line exists, labelled so; per-line totals are always shown. Not decided in any earlier doc.
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Use one consistent total definition. Documentation decision; runtime implementation pending. -->
+- **Decided (FD2)**: `vehiclesCounted` is the sum of count buckets, labelled Line crossing count or Zone presence count. A vehicle may contribute to multiple lines/zones. Do not claim globally unique vehicles or use the highest single-line total.
 
 | Dashboard figure | Query in plain words | Tag |
 |---|---|---|
-| `totalVehicles` | Sum of `vehicles_counted` of the latest completed job of each ready upload, in range | Target |
+| Method-specific count totals | Sum buckets of the latest completed job per upload in range, grouped by method; a scalar requires a method filter (FD2) | Decided |
 | `activeJobs` | Jobs `queued` or `running` | Target |
 | `completedReports`, `avgConfidence`, `hoursAnalyzed` | Reports in range; mean `confidence_mean`; sum `duration_seconds / 3600` of uploads with a completed job | Target |
 | `*Delta` | Same figure for the previous period; default previous 7 days (DATA_MODEL 5b) | Open |
-| `trafficVolumeByHour`, `vehicleClassBreakdown`, `weeklyTrafficTrend`, `peakHours` | Group `count_buckets` by hour of clock time, class, weekday; top 5 buckets | Target |
+| `trafficVolumeByHour`, `vehicleClassBreakdown`, `weeklyTrafficTrend`, `peakHours` | Group the same selected latest-job buckets by method and requested time/class dimensions; keep methods separate (FD2) | Decided |
 
 - **Proposal**: "latest completed job of each upload" stops a rerun being added twice. Dashboard and report figures for the same job set call the same repository function, so they agree (REQ 3.16); a test compares them. No caching (O17).
-- **Target**: `create_report(job_id, report_type, options)`: job `completed` and in the organisation; key `(job_id, report_type, options_hash, version)`, hash = SHA-256 of sorted options; **Proposal**: `INSERT ... ON CONFLICT DO NOTHING RETURNING`, then select, so a repeat returns the same row (REQ 3.22); a deliberate regeneration passes `version + 1`.
+- **Decided (FD17)**: `POST /api/reports` creates version 1 for `(job_id, report_type, options_hash)` after organisation/completed-job checks. Normalize options and hash their canonical JSON; repeated creation returns the existing version 1. Client-supplied version is rejected. `POST /api/reports/{id}/regenerate` locks the job and creates or returns exactly version `source_report.version + 1` with the same source job, normalized options, method and metadata snapshot. The server assigns the version; the existing unique key prevents duplicate successors. Concurrent/repeated calls on the same source return the same successor (201 first, 200 thereafter); to request another generation, call on that successor. New options use normal create-report semantics. Insert the notification only for a genuinely new row in the same transaction. Exports remain unique per report/format.
 - **Proposal**: export is built on first request, stored in outputs, recorded in `report_files` (key, size, hash, `analysis_version`, `generated_at`); later requests stream the stored file and `generated_at` does not change (REQ 3.21).
 
 | Report part | Content | Tag |
 |---|---|---|
 | Header | Title, project, upload, job id, type, filters, `generated_at` UTC, analysis version (configuration version, model name and hash, code version) | Target |
-| Method and confidence | "Counts are estimates from automatic vehicle detection and line-crossing"; tracker, thresholds, frame skip, bucket length; mean, min, max confidence | Target |
+| Method and confidence | Estimated line crossing count or zone presence count according to the stored method; tracker, thresholds, frame skip, bucket length and confidence | Decided, FD1–FD2 |
 | Totals and series | Per class, direction, line, zone; one row per bucket | Target |
 | Evidence | List of annotated frames with times (PDF: up to 6 thumbnails) | Proposal |
 
@@ -658,15 +736,18 @@ Lines and zones are stored 0 to 1; the counter converts to pixels (`x*width`, `y
 - **As built**: `axios.create({ baseURL: import.meta.env.VITE_API_URL })` only (`api.ts:3-5`); no token; imported by `auth.service.ts` which nothing imports.
 - **Proposal**: add `Authorization` from the auth service, `X-Request-Id`, and turn every error response into `ApiError { code, message, diagnosticId, status }` (network failure: `network_error`; a `401` signs out once and goes to `/login`). Missing `VITE_API_URL` gives a clear message (REQ 1.30).
 
-### 11.2 Services and what each returns (`src/types/` unchanged)
+<!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD2: remove incompatible promises that all response types stay unchanged. Documentation correction; runtime implementation pending. -->
+### 11.2 Services and what each returns
 
-| Service | Functions (existing return types kept) | Calls | Tag |
+| Service | Functions and required contract changes | Calls | Tag |
 |---|---|---|---|
 | `project.service.ts` | `getProjects(): Promise<Project[]>`, `getProject`, `getProjectVideos`, `getLocationSuggestions`; new `createProject`, `archiveProject` | `/api/projects...` | Proposal |
 | `upload.service.ts` | `getInitialUploadFiles(): Promise<UploadFile[]>`, `getUploadLocationSuggestions`; new `uploadVideo(projectId, file, notes, onProgress)`, `deleteUpload`, `getPreviewUrl` | `/api/projects/{id}/uploads`, `/api/uploads/{id}` | Proposal |
 | `configuration.service.ts` (new) | `saveConfiguration(uploadId, input)` | `/api/uploads/{id}/configurations` | Proposal |
 | `processing.service.ts` | `getJobQueue(): Promise<JobQueueItem[]>`, `getProcessingJobs()`, `getProcessingLogs(jobId)`, `getTimelineStages()`, `getSegments()`; new `createJob`, `getJob`, `cancelJob`, `retryJob`, `rerunJob` | `/api/jobs...` | Proposal |
-| `report.service.ts`, `dashboard.service.ts` | Existing functions plus `createReport`, `downloadReport(id, format)` | `/api/reports...`, `/api/dashboard` | Proposal |
+| `report.service.ts`, `dashboard.service.ts` | Count responses consume `countsByMethod`; accept optional method filter; keep `createReport`, `regenerateReport(id)`, `downloadReport(id, format)` | `/api/reports...`, `/api/dashboard?range=&method=` | FD2 contract; implementation pending |
 | `auth.service.ts`, `notification.service.ts` (new) | 11.4; `list`, `markRead` | Supabase, `/api/me`, `/api/notifications` | Proposal |
 
 - **As built**: services also export synchronous arrays that pages import (`processing.service.ts:24-30`, `upload.service.ts:20`, `project.service.ts:21-25`, `dashboard.service.ts:71-84`), used at `JobQueuePage.tsx:15`, `ProcessingPage.tsx:23-29`, `UploadPage.tsx:34-35`.
@@ -685,12 +766,15 @@ Lines and zones are stored 0 to 1; the counter converts to pixels (`x*width`, `y
 - **Open**: job id as a query value (`/processing?job=<id>`) and a request every 3 seconds while `queued` or `running` (O24). **Target**: after a refresh the page reads `job` from the address and asks the server (REQ 3.39, 3.40).
 - **Proposal**: polling stops on `completed`, `failed`, `cancelled` or unmount, pauses while the tab is hidden (one request on return); on error it keeps the last data, doubles the wait up to 30 seconds and shows a banner. `JobQueuePage` polls only while some job is `queued` or `running`. Log lines come from `GET /api/jobs/{id}/events?after=`; the random messages and starting `3628` (`ProcessingPage.tsx:49-67`) go, elapsed comes from `startedAt`.
 
+<!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD8: one selected video and exactly one completed upload per workflow. Documentation correction; runtime implementation pending. -->
 ### 11.5 Upload wizard, nine steps (`UploadPage.tsx`, 485 lines)
 
 | # | Step | State kept | API call and when | Tag |
 |---|---|---|---|---|
 | 1 | Project | `selectedProject` or `newProjectName`, `location` | Projects from `GET /api/projects` on load; on Continue a new name calls `POST /api/projects` and keeps the id | Proposal |
-| 2 | Upload | list of `{localId, file, status, progress, uploadId?}` | Per file on pick or drop (same type filter for both, REQ 2.56): `POST .../uploads` with progress; Retry repeats; remove calls `DELETE` if it exists. Continue needs one `done` file. The two sample files (`:61`) go | Proposal |
+| 2 | Upload | One `{localId, file, status, progress, uploadId?}` or null | Accept exactly one file on pick/drop; reject a multi-file selection with a clear message. Upload once via `POST .../uploads`; Retry follows FD15: unknown outcome reuses key; confirmed failed attempt uses a new key. Continue requires this one upload to be `done`. Remove cancels an active transfer or deletes an eligible saved upload, then clears its preview/configuration/job state before replacement | Decided, FD8 |
 | 3 | Preview | chosen `uploadId` | `GET /api/uploads/{id}`; real frame from `previewUrl` in `VideoPreview` (props not read) | Proposal |
 | 4 | Metadata | camera, road, date, times, weather, notes as controlled state (plain inputs today, `:259-293`) | Sent with the upload, or `PATCH /api/uploads/{id}` if edited later (new route). Default end time `23:59`, not `24:00` (O75) | Proposal |
 | 5 | Detection Zone | `zones` lifted from the canvas | none | Proposal |
@@ -700,7 +784,10 @@ Lines and zones are stored 0 to 1; the counter converts to pixels (`x*width`, `y
 | 9 | Queue | `jobId` | `POST /api/jobs` with an `Idempotency-Key` made when the step opens; then `navigate('/job-queue?job=<id>')` | Proposal |
 
 - **Proposal**: the step bar jumps only to steps up to the furthest valid one (REQ 2.41). The page is split into step files under 250 lines with no visual change (REQ 2.54). No draft kept on refresh (O29).
-- **Open**: several files in one wizard run. Default: one job per file with the same configuration copied; steps 3 to 8 work on the first file. Not in earlier docs; owner the user.
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Keep preview coordinates bound to one video. Documentation decision; runtime implementation pending. -->
+- **Decided (FD8)**: one video per workflow. Multiple videos require separate workflows and independently drawn configurations.
 
 ### 11.6 The two canvases
 
@@ -714,7 +801,7 @@ Lines and zones are stored 0 to 1; the counter converts to pixels (`x*width`, `y
 |---|---|---|
 | `src/services/api.ts`, `{project,upload,processing,report,dashboard,auth}.service.ts`, new `configuration.service.ts`, `notification.service.ts` | 11.1 to 11.3 | Proposal |
 | `src/types/processing.ts` | Drop `'processing'` from `JobStatus` (O7); optional extras | Proposal |
-| `src/types/user.ts` and others | `user.ts` gets the one `User`, `Profile`, `Organization`, `Role` (REQ 1.23); others only optional fields | Proposal |
+| `src/types/user.ts` and others | `user.ts` gets one `User`, `Profile`, `Organization`, `Role` (REQ 1.23); count-bearing types must carry method/label and use the FD2 grouped analytics contract, not only optional additions | Proposal except decided FD2 contract |
 | `src/lib/auth.tsx`, `src/lib/supabase.ts` | Real session; missing-env message (REQ 1.30, F1) | Proposal |
 | `src/pages/UploadPage.tsx` (+ new step files), `src/components/shared/DetectionZoneCanvas.tsx`, `CountLineCanvas.tsx` | 11.5, 11.6 | Proposal |
 | `src/pages/{JobQueue,Processing,Dashboard,Reports,Projects,ProjectDetail}Page.tsx` | Promises, states, polling; remove `processing` branches (`JobQueuePage.tsx:31`, `ProcessingPage.tsx:47`); `ReportsPage.tsx:53-61` Download and Share become real or hidden (O31) | Proposal |
@@ -730,18 +817,21 @@ Lines and zones are stored 0 to 1; the counter converts to pixels (`x*width`, `y
 | Job | Trigger | Schedule | Steps | Failure handling | Tag |
 |---|---|---|---|---|---|
 | Worker loop | New `queued` row | Poll every 2 s when idle | Claim, run, write result (8.2) | Per-job failure (8.1); a dead loop is caught by recovery | Target |
-| Stuck-job recovery | Timer; worker start | Every 30 s (value mine) | Fail `running` jobs with a stale heartbeat as `worker_lost`, set attempt `failed`, notify | Idempotent: touches only `running` rows | Proposal |
-| Timeout check | Between batches | Each batch | `now - started_at` vs `timeout_seconds`; fail `job_timeout` | Off when blank (O46) | Proposal |
+| Stuck-job recovery | Independent recovery process; startup | Configured interval (O81) | Lock/recheck stale ownership and fail only that attempt; notification in transaction | Old attempts cannot publish after retry (FD5–FD6) | Decided mechanism; timing open |
+| Timeout check | Independent supervisor | Configured polling interval | Check deadline even during blocked engine calls; stop then terminate after grace | O46/O81 values open; FD5 | Decided mechanism |
 | Expired invite revocation | Timer; next invite to same email | Daily 03:00 UTC (time mine) | Set `revoked_at` where `expires_at < now()` and not accepted | Safe to repeat | Open |
-| Retention and purge | Timer | Daily | For each retention setting with a value: set `source_deleted_at` then delete the file; `deleted_at` on artifacts then delete files; delete old events, results, audit, notifications. Organisation purge is run by a person, in dependency order, in one transaction starting `SET LOCAL jr.purge = 'on'` (O73, O76) | No period has a value, so it does nothing until O10 is answered. Row first, file second; a failed delete retries next day | Open |
+| Retention and purge | Timer | Periods pending approval | No automatic audit/result/bucket deletion. Eligible source/evidence objects: delete first, then mark; retry failures. Report-file retention disabled pending policy | Preserve relational evidence; controlled organisation purge remains a separate proposal (FD7) | Decided restrictions; periods open |
 | Report generation | Export request with no file; after a job with `generateReport` completes (O22) | On demand | Build, put in outputs, insert `report_files` | One file per format per report; a failed build leaves no row | Proposal |
-| Artifact cleanup | Timer | Hourly | Delete part files older than 1 hour and set their rows `failed`; delete outputs of failed or cancelled attempts; delete unused configurations older than 7 days | Each item independent, errors logged with a diagnostic id | Proposal |
-| Notification dispatch | Domain event | Immediate | Insert `notifications` rows (13) | Default: after commit, a lost notice is accepted; the alternative is inside the transaction | Open |
+| Artifact cleanup | Timer | Configured interval | Verify exact upload/attempt is inactive before deleting temporary or failed-attempt objects; never delete completed evidence | Age alone is insufficient; attempt-specific keys (FD3, FD7) | Decided |
+| Notification dispatch | Actual domain transition | Same transaction | Insert notification with upload/job/report transition; rollback both on failure | Lock/transition checks prevent duplicates; existing report returns no new notice (FD6) | Decided |
 
 - **Proposal**: the scheduler is an in-memory table of `(name, interval, last_run)`; two workers may both run a daily job, which is safe because each is idempotent. No lock table.
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD14: deliver invitations before membership without organisation notifications. Documentation decision; implementation pending. -->
 ## 13. Domain events and notifications
 
 - **Proposal**: events are plain calls (`notify(...)`, `audit.record(...)`) inside the service; no event bus or outbox in this version.
@@ -753,8 +843,8 @@ Lines and zones are stored 0 to 1; the counter converts to pixels (`x*width`, `y
 | Job `failed` (incl. `worker_lost`) | `job_failed` | `created_by` and all owners and admins | `/processing?job=<id>` | Proposal |
 | Job `cancelled` | `job_cancelled` | `created_by`, and the canceller if different | `/job-queue` | Proposal |
 | Report created | `report_ready` | The creator | `/reports` | Proposal |
-| Invite for an email that already has a `users` row | `invite` | That user | `/organization` | Proposal |
-| Invite for an unknown email | none | Email only (O38) | | Open |
+| Invitation before membership, whether or not a users row exists | none | Email to the invited address (delivery mechanism O38) | Token-bearing acceptance link | Decided delivery boundary; provider open |
+| Invitation accepted | info, if needed | Newly active member only, after membership is created | /organization | Proposal; membership rule preserved |
 
 - **As built**: `NotificationPanel.tsx:5` reads sample data; no table exists (REQ 1.21). **Open**: channels beyond in-app; default in-app only (O84). **Target**: a notification's `job_id` must be in the same organisation (DATA_MODEL 4.10); `user_id` in the organisation is a service rule.
 
@@ -770,14 +860,19 @@ Shape `{ "error": { "code", "message", "diagnosticId" } }` (O26); HTTP codes per
 | `onboarding_required` / `account_suspended` | 403 | Please finish setting up your organisation first. / This account has been suspended. | Check 2 | Proposal |
 | `forbidden` / `not_found` | 403 / 404 | You do not have permission to do this. / We could not find what you asked for. | Checks 4, 3 | Proposal |
 | `invalid_input` | 422 | Some of the information is not valid. Please check the highlighted fields. | Schema | Proposal |
+| `invalid_method` | 422 | Choose line_crossing or zone_presence. | FD2 | Decided |
+| `metadata_locked` | 409 | Analysis already exists for this video; only notes can be edited. | FD4 | Decided |
+| `upload_in_progress`, `upload_retry_required`, `idempotency_conflict` | 409 | This upload is still in progress. / Start a new upload attempt with a new key. / This key belongs to a different upload request context. | FD15 | Decided |
+| `source_unavailable` | 410 | The source video is no longer available; upload it again before analysis. | FD21 | Decided |
+| `storage_unavailable` | 503 | File storage could not be reached. Please retry later. | FD21 | Decided |
 | `coordinates_out_of_range`, `line_too_short`, `zone_too_few_points` | 422 | A point is outside the video frame. / A counting line needs two different points. / A detection zone needs at least three points. | Invariants 13, 14 | Target |
 | `zone_self_crossing` | 422 | The detection zone crosses over itself. Please redraw it. | 7.1 | Proposal |
 | `no_line_or_zone` | 422 | Draw at least one counting line or detection zone before queuing. | O42 | Target |
 | `unsupported_tracker`, `unsupported_model`, `unsupported_class` | 422 | That tracker, model or vehicle type is not available. | REQ 5.8 | Target |
 | `invalid_threshold`, `invalid_option`, `invalid_direction` | 422 | One of the analysis settings is outside the allowed range. | 7.1 | Proposal |
-| `file_too_large` | 413 | This video is larger than the allowed size of {limit}. Please choose a smaller file. | D3, 6 step 3 | Target |
-| `unsupported_type` | 415 | This file is not a supported video. Please use MP4, MKV or AVI. | D3, D4, steps 4, 5 | Target |
-| `unreadable_video`, `video_too_long` | 422 | We could not read this video. It may be damaged. / This video is longer than the allowed {limit}. | D3, steps 6, 7 | Target |
+| `file_too_large` | 413 | This video is larger than the allowed size of {limit}. Please choose a smaller file. | D3, section 6 steps 1 and 5 | Target |
+| `unsupported_type` | 415 | This file is not a supported video. Please use MP4, MKV or AVI. | D3, D4, section 6 step 3 | Target |
+| `unreadable_video`, `video_too_long` | 422 | We could not read this video. It may be damaged. / This video is longer than the allowed {limit}. | D3, section 6 step 6 | Target |
 | `invalid_time` | 422 | The recording time must be before 24:00. | O75, invariant 30 | Target |
 | `upload_interrupted` | 400 | The upload was interrupted. Please try again. | 6.1 | Proposal |
 | `upload_not_ready`, `upload_in_use` | 409 | This video is not ready yet. / This video has been analysed and cannot be deleted. | Upload state; RESTRICT | Target |
@@ -817,13 +912,16 @@ Job failure codes (`jobs.error_code`, text in `jobs.safe_message`; retryable per
 
 ## 16. Testing and delivery
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD18: explicitly exercise deferred constraints before rollback. Documentation decision; implementation pending. -->
 ### 16.1 Layers
 
 | Layer | What | Tool | Tag |
 |---|---|---|---|
 | Unit | Geometry, point-in-polygon, side and crossing, buckets, class filter, name cleaning, error mapping, permission table | `pytest` | Open (O87) |
-| Integration | Repositories and services on a real PostgreSQL 16 (container or local install, O72) with `schema.sql` loaded; each test in a rolled-back transaction | `pytest` | Proposal |
-| API contract | Each response parsed against the same-named frontend type (REQ 4.37): a script reads field names in `src/types/*.ts` and compares keys and value kinds | `pytest` + script | Proposal |
+| Integration | PostgreSQL 16 with schema loaded. Ordinary tests roll back; deferred-trigger tests execute SET CONSTRAINTS ALL IMMEDIATE after the complete transaction sequence, or commit isolated test transactions with cleanup | pytest | Decided verification requirement, FD18 |
+| API contract | Validate complete response fixtures against the agreed contracts, including FD2 groups, FD16 list envelopes and nullable/unknown progress totals. Update consumer types alongside migration; illustrative partial examples in 5.6 are not full fixtures | pytest + contract checks | Target verification; tooling proposal |
 | Pipeline | Short consented fixture video (O37), run twice, same counts within the tolerance (O44; until set, exact equality is tested and a difference is reported); fake detector tests with no model | `pytest` | Target |
 | Frontend | Service tests with mocked axios; route smoke tests. Vitest is not in the repo as far as I read (not verified) | | Open (O87) |
 | End to end | The paths of REQ 6.5 | not designed | Target |
@@ -835,10 +933,14 @@ Job failure codes (`jobs.error_code`, text in `jobs.safe_message`; retryable per
 - **Target**: invariants 1, 7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 20, 21, 23, 27, 28, 30 each get a test that tries the forbidden action and expects the database error: second owner; status `done`; `completed` to `queued`; `failed` without code; `completed` without a result; update of a locked configuration; moving a zone to an unlocked configuration; coordinate 1.5; a count naming another configuration's line; duplicate bucket with null zone; deleting an upload that has a job; `ready` upload without checksum; update, delete and truncate on `audit_events` as a non-owner role; job inserted as `running`; result inserted while `queued`; time `24:00:00`. Invariants 8, 10, 11, 12, 17, 23, 27, 28 are Postgres-only and are also tested through the service.
 - **Target**: demote-then-promote: `transfer_ownership` succeeds in that order; promote-first and one swapping UPDATE fail (DATA_MODEL 4.2). Purge: without `SET LOCAL jr.purge = 'on'` it fails on the first locked configuration; with it the organisation is removed and audit rows remain. Completed job: omitting `progress_percent = 100` or `finished_at` in the update is refused.
 
+- **Decided (FD18)**: for the completed-result guard, exercise result insertion then completion, then force deferred constraints and expect success. Exercise completed without result, then force constraints and expect failure. A test that only rolls back without forcing constraints does not prove this guard. Test explicit COMMIT in an isolated database for commit-boundary behavior; use savepoints/rollback after expected failures.
+
 ### 16.3 Scoping, state and retry tests
 
 - **Proposal**: two organisations A and B: every id from A used by B returns `404`, never `403`; lists contain none of A's rows; a researcher is refused every N in 4.4; a signed-out call to a foreign id returns `401`.
-- **Proposal**: each allowed move works; every other pair is refused by the service (`409`) and, bypassing the service, by the trigger. Retry: error columns cleared, `attempt_no` 2, old attempt keeps its code and diagnostic id, new attempt has its own events. Cancel: a `running` job with `cancel_requested_at` stops at the next batch, ends `cancelled`, no `job_results` row. Recovery: a stale `running` job becomes `failed` / `worker_lost` / retryable and a late write from the old worker changes no row. Claim: two claims on one queued job give one winner.
+- **Proposal**: each allowed move works; every other pair is refused by the service (`409`) and, bypassing the service, by the trigger. Retry: error columns cleared, `attempt_no` 2, old attempt keeps its code and diagnostic id, new attempt has its own events. Cancel: test both cooperative batch stop and supervisor termination of blocked analysis after configured grace; end cancelled only after confirmed stop, with no job_results row (FD5). Recovery: a stale `running` job becomes `failed` / `worker_lost` / retryable and a late write from the old worker changes no row. Claim: two claims on one queued job give one winner.
+
+- **Required follow-up cases (FD13–FD21)**: progress with observed 101 versus estimated 100 atomically clears the estimate, preserves the SQL bound and completes with actual counters; unknown totals have no ETA division. Ready upload replay returns the same row; receiving replay starts no second writer; failed retry uses a fresh key; pre-insert rejection leaves no row; response loss after commit preserves success. Concurrent regeneration of one source report produces one successor and one notice. Non-member invitations use email without an organisation notification. Profile edits before onboarding follow U auth; list envelopes and FD2 dashboard groups match contract fixtures. Retention versus queue/retry is serialized in both lock orders of arrival: either the job wins and deletion skips, or deletion wins and queueing returns 410; storage outages return 503. Simulate deletion success followed by database rollback and confirm missing-source detection blocks a new job. These are runtime tests still to implement.
 
 ### 16.4 The five defects, each with its proof
 
@@ -862,7 +964,22 @@ Job failure codes (`jobs.error_code`, text in `jobs.safe_message`; retryable per
 
 - **Open**: migration tool; default plain numbered SQL files (O63). `migrations/0001_initial.sql` is `schema.sql` after it has been run once on an empty test database and corrected (DATA_MODEL says it is untested). A `schema_migrations(version, applied_at)` table records what ran; `python -m app.database.migrate` applies missing files in order, one transaction each. **Proposal**: no down scripts; rollback is a restore from a backup taken before. The user must approve this.
 - **Proposal**: SQLAlchemy models are written to match `schema.sql`; the app never calls `create_all`; a test compares model columns with the live schema.
-- **Proposal**: run commands (REQ 6.9; not run). Backend: `python -m venv .venv`, `pip install -r backend/requirements.txt`, `python -m app.database.migrate`, then from `backend/` `uvicorn app.main:app --reload`, `python -m app.jobs.worker` (after Sprint 3), `pytest backend`. Frontend from `frontend/`: `npm install`, `npm run dev`, `npm run lint`, `npm run typecheck`, `npm run build`.
+<!-- Adrishikhar - 7 November 2026, 18:05 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: REQ 6.9: state working folders and separate existing entry points from future migration, worker and test commands.
+Evidence: "okay fix this and give final 5 checks". Paths/scripts checked statically; commands below not executed. -->
+- **Run-command guidance (REQ 6.9)**: folder names below are relative to the repository root. Open a terminal in that folder before running its commands. Backend commands assume `python` selects a usable, activated project environment. Environment creation and dependency installation require separate approval; neither was performed by this documentation fix.
+
+| Working folder | Command | Availability and prerequisites |
+|---|---|---|
+| `backend/` | `python -m pip install -r requirements.txt` | Existing requirements file; installation requires approval. D2 dependency gaps remain, so this is not a verified complete setup |
+| `backend/` | `python -m uvicorn app.main:app --reload` | Existing API entry point; requires working dependencies and configuration. Startup remains unverified |
+| `backend/` | `python -m app.database.migrate` | Future command: migration module does not exist yet. Requires implementation, the approved migration approach and fresh-PostgreSQL schema validation |
+| `backend/` | `python -m app.jobs.worker` | Future command: worker module does not exist yet; planned after Sprint 3 implementation |
+| `backend/` | `python -m pytest` | Future test command: requires backend tests and pytest installation. Discover tests from this folder; do not append a second backend path |
+| `frontend/` | `npm install` | Existing package manifest; installation requires approval |
+| `frontend/` | `npm run dev`, `npm run lint`, `npm run typecheck`, `npm run build` | Existing scripts; run separately with dependencies installed. This correction does not rerun them or supersede the recorded lint failures |
+
 - **As built**: `backend/.venv` was made on a Mac and cannot run here (F6); a new environment is needed.
 
 ### 16.8 Order of work (blueprint section 9; Sprint 2 in detail, O6)
@@ -902,11 +1019,11 @@ Owner for all: the user. Defaults apply until answered. Inherited by ID, not red
 
 | ID | Question | Default | Section |
 |---|---|---|---|
-| O77 | Video reader and writer library; how container type is checked | OpenCV headless; first-bytes check as in 6 step 5 | 6, 9.2 |
+| O77 | Video reader and writer library; how container type is checked | OpenCV headless; filename/content checks as in section 6 step 3; verified EOF per FD10 | 6, 9.2 |
 | O78 | How the real trackers are provided | Adapters over Ultralytics trackers for ByteTrack and BoT-SORT, own small SORT; fallback an own simple overlap tracker. Not verified against the installed version | 9.4 |
 | O79 | Count point, jitter band, once-per-line rule | Bottom-centre, 1 percent of the frame diagonal, once per line per track | 9.5 |
-| O80 | What a zone-only job counts, since `count_buckets.direction` allows only `forward` or `backward` | Distinct tracks seen in the zone, once each; needs a DATA_MODEL change (a third direction word or a nullable column) | 9.5 |
-| O81 | Heartbeat and stale-job thresholds | Progress writes are the heartbeat; stale after 90 seconds (mine); a heartbeat thread only if batches are slower | 8.2, 8.3 |
+| O80 | Zone-only counting | Decided FD1: once per track per zone, including first-frame presence; `not_applicable` direction | 9.5, 18 |
+| O81 | Heartbeat and stale-job thresholds | Independent supervisor decided FD5; interval, stale threshold and termination grace remain open | 8.2, 8.3, 18 |
 | O82 | Signed link lifetime (NFR-18) | 5 minutes | 6.2 |
 | O83 | CSV and PDF libraries | Python `csv`; ReportLab | 10 |
 | O84 | Notification channels beyond in-app | In-app only | 13 |
@@ -914,7 +1031,7 @@ Owner for all: the user. Defaults apply until answered. Inherited by ID, not red
 | O86 | Upload transport | One streamed request per file, no resumable upload | 6 |
 | O87 | Test tools and CI product | `pytest` with the FastAPI test client, Vitest; no CI product | 16.1, 16.6 |
 
-- **Open**: raised in the text with a clear default and no number: headline total across several lines (10); several files in one wizard run (11.5); researcher may cancel any job (4.4); old `POST /api/uploads` behaviour (5.1); suspended users (4.6); duplicate-file warning (6.1). Owner: the user.
+- **Open**: researcher cancellation permissions (4.4), legacy upload behavior (5.1), suspended users (4.6) and duplicate-file warnings (6.1) remain unresolved. Headline totals and multi-video scope are resolved by FD2 and FD8.
 
 ---
 
@@ -936,3 +1053,129 @@ Owner for all: the user. Defaults apply until answered. Inherited by ID, not red
 | 14 Errors | 4.32, 4.34, 4.50 to 4.54, 5.19 | R5, D3, D4 | inv. 9, 13, 14, 30 |
 | 15 Security | NFR-1 to NFR-9, NFR-18, 4.40 to 4.43, AC-14 | GAP-16, R9, O43, O62, O71, O76 | 4.11, 10, inv. 23 |
 | 16 Testing, delivery | 6.1 to 6.23, 4.37, 5.23, 5.30 to 5.32 | GAP-1, GAP-17 to GAP-19, D1 to D5, O37, O63, O72 | 6, 9 |
+
+
+## 18. Approved backend flow corrections
+
+Requested and approved by Adrishikhar Barua (backend contributor); edited by Codex on 2026-11-07. Evidence: instruction to fix the reviewed gaps. These decisions replace conflicting draft defaults; backend runtime implementation and PostgreSQL execution validation remain pending.
+
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD1 — Counting modes (resolves O80). Documentation decision; runtime implementation pending. -->
+### FD1 — Counting modes (resolves O80)
+
+If a configuration has lines, its method is `line_crossing`; zones restrict detections and provide attribution, not a second independent counting mode. Each tracked vehicle counts at most once per line in an allowed direction. Store the actual `forward` or `backward` direction and a non-null `line_id`.
+
+If there are no lines, at least one zone is required (O42). The method is `zone_presence`: each track counts once per zone where it is observed, including tracks already inside at the first frame. Use the first observation in that zone for the time bucket, `direction = not_applicable`, `line_id = NULL` and a non-null `zone_id`. This is presence, not an entry-crossing count. Leaving and re-entering with the same track ID does not add another count for that zone. A lost track recovered under a new ID may count again; outputs remain estimates.
+
+For overlapping zones, a zone-presence track may contribute once to each zone. For a line crossing inside multiple zones, assign exactly one zone using `(sort_order, id)` order; with no zones use NULL. Attribute using the crossing intersection point. Reject a crossing outside all configured zones. This avoids duplicating one line event when filtering by zone. Counters retain per-track observations until the final class is known, then aggregate once using the original event time.
+
+The result writer must check that the method matches the locked configuration and that every bucket matches its result method. SQL enforces bucket shape and allowed method/direction words; this cross-table/configuration rule is a service invariant to test.
+
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD2 — Totals and reporting. Documentation decision; runtime implementation pending. -->
+### FD2 — Totals and reporting
+
+`vehicles_counted` remains the existing field name for compatibility, but means the sum of the result's count buckets. For line analysis label it **Line crossing count**; for zone analysis label it **Zone presence count**. It is never labelled a globally unique vehicle count. A vehicle crossing two lines contributes two line events; observation in two zones contributes two zone presences.
+
+Filtered report totals sum only the selected buckets. Store the selected total and method with the report; do not compare a filtered report against an unfiltered dashboard. Dashboard totals use the latest completed job per upload in the selected period and are separated by method. Never sum line-crossing and zone-presence counts into one vehicle KPI. Charts and comparisons use the same selected jobs, method, filters and time interpretation as the matching report. Mixed-method requests return separate series/totals; a legacy scalar requires a method filter rather than an invented combined number. The proposed highest-single-line headline is withdrawn.
+
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD3 — Storage keys. Documentation decision; runtime implementation pending. -->
+### FD3 — Storage keys
+
+Only backend code generates keys. The storage adapter accepts these exact category patterns, with canonical UUIDs and positive attempt numbers:
+
+| Area | Key pattern | Purpose |
+|---|---|---|
+| sources | `tmp/<upload-uuid>.part` | Incomplete upload |
+| sources | `<upload-uuid>.<mp4-or-mkv-or-avi>` | Accepted source video |
+| sources | `previews/<upload-uuid>.jpg` | Preview frame |
+| outputs | `jobs/<job-uuid>/attempts/<attempt>/<artifact-uuid>.<mp4-or-jpg>` | Attempt-specific evidence |
+| outputs | `reports/<report-uuid>/<export-uuid>.<csv-or-pdf>` | Report export |
+
+Allow only separators required by these patterns. Reject absolute paths, drive prefixes, backslashes, empty or dot segments, encoded traversal and unrecognised categories/extensions. Resolve local paths and prove containment under the selected area root, including symlink/reparse-point checks. Never use client filenames or arbitrary request keys. S3 uses the same logical keys in separate source/output buckets. Temporary-to-final promotion is performed by the adapter (local rename or object copy/delete); it is not a database transaction.
+
+A failed database commit after file promotion must schedule cleanup of orphaned objects. Cleanup may remove only the exact failed upload/attempt/export objects, never a current attempt's files. Uploaded previews and exports use the same access checks as their parent records.
+
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD4 — Upload metadata edits. Documentation decision; runtime implementation pending. -->
+### FD4 — Upload metadata edits
+
+Add `PATCH /api/uploads/{id}` with `UPLOAD_WRITE` permission and organisation scoping. Allowed fields: `cameraId`, `roadName`, `recordedDate`, `recordedStartTime`, `recordedEndTime`, `weather`, `notes`. Reject unknown fields and edits to measured properties such as checksum, dimensions and frame rate. The upload must be ready; reuse upload metadata validation.
+
+Before the first job, all allowed metadata fields may change. After any job exists, only descriptive `notes` may change; return `409 metadata_locked` for other changes. The patch and job-creation services lock the same upload row to serialize concurrent edits and queue requests. This conservative boundary preserves the source context used for analysis. Correcting frozen metadata needs a separately approved versioning workflow.
+
+At job creation save an immutable `jobs.metadata_snapshot`; copy it to `reports.metadata_snapshot` when generating a report. Exports always use the report snapshot, never live upload notes. Job retries and reruns using the same configuration preserve the original job snapshot; a newly configured job takes a fresh snapshot. Snapshot fields are the allowed metadata fields above, including explicit nulls. They contain no credentials. Notes edited later do not rewrite historical reports.
+
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD5 — Worker liveness, deadlines and attempts (refines O81). Documentation decision; runtime implementation pending. -->
+### FD5 — Worker liveness, deadlines and attempts (refines O81)
+
+Heartbeat is independent of frame progress and remains active during download, model loading, processing and output storage. Use a supervisor around an isolated analysis process; the supervisor owns database writes and polls cancel/deadline signals even when the engine is blocked. Cooperative batch cancellation is attempted first; after a configured grace period the supervisor can terminate that attempt's analysis process and clean only its outputs. A heartbeat alone is not evidence that processing is making progress.
+
+Every progress, heartbeat, failure, cancellation and completion write must match `(job_id, attempt_no, worker_id, status=running)`. Worker IDs are unique per process start. A completion transaction locks the job, rechecks this ownership and cancellation, writes results and the completed state together. Recovery locks and rechecks the stale job before failing that exact attempt. The old attempt must not publish records or replace output keys after a retry is claimed.
+
+Use separate supervisor/database sessions for heartbeat and completion. Stale timeout must exceed heartbeat interval with margin. Heartbeat interval, stale threshold, processing deadline, cancellation grace and retry limits remain configuration decisions (O46/O81); do not invent accepted numbers. Recovery must run independently of the busy analysis process. Failure of the supervisor itself is detected by another recovery process or on restart.
+
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD6 — In-app notifications. Documentation decision; runtime implementation pending. -->
+### FD6 — In-app notifications
+
+Insert an in-app notification in the same transaction as its corresponding upload, job or report state change. A notification insert failure rolls back that transaction; no success is returned before commit. Repeated handling must not duplicate notifications: serialize on the entity/attempt and notify only when the state transition actually occurs. Report deduplication returns the existing report without creating a second notification.
+
+This guarantees a durable notification record when the transaction succeeds, not that a browser has displayed it. Email and other external delivery remain separate, unimplemented proposals; no email delivery guarantee is implied. Refusal/error logging must not turn an intended refusal into a successful operation.
+
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD7 — Retention and cleanup. Documentation decision; runtime implementation pending. -->
+### FD7 — Retention and cleanup
+
+Do not automatically delete audit records, completed results or their count buckets. Audit remains append-only; results remain purge-only under the existing controlled organisation-purge proposal. Reject non-null automatic retention settings for audit/results until a separately approved policy and compatible implementation exist. No trigger bypass is introduced.
+
+Source/evidence/notification retention stays disabled until periods are approved. When enabled, delete an eligible stored object first, treating an already absent object as success, then mark its row as deleted. If object deletion fails leave the marker unset for retry; if the row update fails, the next run can repeat the idempotent deletion. Preserve upload and artifact records needed by results. Report-file retention is disabled pending a deletion-marker and re-export policy; do not leave report file records falsely promising an available export.
+
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Changed by: Codex. Fix: FD21: serialize source deletion against queue/retry and reject removed sources. -->
+**FD21 source eligibility:** approved age alone is insufficient. Retention locks the upload row, checks there are no queued/running jobs for it, deletes the source object and sets source_deleted_at before releasing that lock. If an active job exists, skip and retry later. Job creation, rerun and retry acquire the same upload lock before the job lock, require ready and source_deleted_at NULL, and check storage existence before queueing. A missing/deleted source returns 410 source_unavailable; storage service failure returns 503 storage_unavailable. If deletion succeeds but the database update crashes, a later queue attempt detects the missing object and rejects it; cleanup can finish the marker idempotently. The lock spans deletion and marking for this initial design; a future lease-based alternative needs separate review. Preserve ready rows and existing results for historical reads. Processing never starts on an absent source. Temporary cleanup remains separately governed by FD7.
+
+Cleanup of abandoned temporary files and outputs of confirmed failed/cancelled attempts is operational cleanup, not result retention. Check the exact upload/attempt is inactive under a lock or ownership check; file age alone must not delete a long-running active upload. Never delete completed evidence through temporary-file cleanup.
+
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD8 — One video per analysis workflow. Documentation decision; runtime implementation pending. -->
+### FD8 — One video per analysis workflow
+
+The first release accepts one video, creates a configuration for that video's preview and queues one job per workflow. Remove the proposed loop that copies the first video's zones/lines to other files. The upload API remains one file per request. Multiple independent uploads are possible through separate workflows; a batch workflow and automatic camera-configuration reuse remain out of scope.
+
+### Verification and implementation handoff
+
+Documentation checks: review cross-document terms, search for superseded rules, inspect the diff and run `git diff --check`. No live database, runtime worker or frontend behavior is changed by these document edits.
+
+Required implementation proof:
+
+- Zone-only buckets accept `not_applicable`; reject directional zone-only buckets and line buckets without actual directions. Reject result methods inconsistent with the configuration. Test first-frame presence, overlap, re-entry and class changes.
+- Two lines and overlapping zones produce labelled event totals without claiming unique vehicles. Filtered reports and dashboards agree for identical job sets and methods.
+- Storage accepts every listed category and rejects traversal, wrong extensions and out-of-root symlink targets; orphan cleanup cannot affect a later attempt.
+- Metadata patch and queue races preserve the correct snapshot; later notes do not change an old report.
+- Slow model loading does not appear as a dead worker; stalled analysis meets configured deadlines; an old attempt cannot write after retry or cancellation.
+- Notification failure rolls back its state transition; repeated processing produces one notice.
+- Cleanup retries failed file deletion, keeps audit/results, and never removes active temporary files.
+- One workflow accepts one video; no coordinates are silently reused across camera views.
+
+The PostgreSQL schema and these behaviors still require execution tests in an approved test environment. Undo the documentation change by reversing only this correction's diff; no database migration has been applied.
+
+
+### Follow-up design acceptance checks (FD9–FD12)
+
+<!-- Adrishikhar - 7 November 2026, 17:45 (Asia/Dhaka) · Fix approved
+Changed by: Codex. Fix: record regression cases for the approved design corrections. -->
+- FD9: invalid metadata arriving before or after file bytes never creates a ready upload or success notification. Promotion/commit failure cleans exact created objects; losing the HTTP response after commit preserves the ready upload.
+- FD10: clean EOF succeeds; early decoder/I/O failure and ambiguous read termination fail without partial results. Wrong frame-count estimates alone do not prove corruption or clean EOF. Progress remains below 100 until completed.
+- FD11: omitted/empty input classes resolve once to an explicit nonempty supported list. Changing defaults later leaves saved jobs unchanged; stored empty, non-array or unsupported lists are rejected by the database/service as specified in DATA_MODEL.
+- FD12: with horizontal line (0,0) to (10,0), band 1, path (5,-2), (5,0.5), (5,-2), (20,-2), (20,2) counts zero. Direct forward/backward crossings count; crossings through the band count once after confirmation; touch-and-return, endpoint bypass, and a crossing reversed within the band cannot reuse stale evidence. Exact on-line samples must wait for an actual side transition. These are required implementation tests; a small design simulation does not verify the backend.

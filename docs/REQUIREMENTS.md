@@ -1,3 +1,6 @@
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: reconcile database decisions, counting contracts and flow rules. Documentation only; runtime pending. -->
 # Johnson Road — Requirements
 
 Version: 0.3 · Date: 2026-11-07 · Status: **draft, awaiting approval**
@@ -68,8 +71,8 @@ Screens: login, register, forgot password, verify email, onboarding, profile, or
 
 | ID | "Fixed" means | How it will be checked | Tag |
 |---|---|---|---|
-| 1.25 | After real sign-in, the user id, profile and organisation on screen are the ones stored in Supabase | Sign in with a test account; open Profile and Organization; ids match the Supabase rows | Target |
-| 1.26 | Editing the name saves to the real row and survives a page reload | Edit name, reload, name stays; row changed in Supabase | Target |
+| 1.25 | Sign-in identity comes from Supabase; profiles and organisations come from backend PostgreSQL (O48) | Sign in and compare backend profile/organisation rows against authenticated identity | Target |
+| 1.26 | Editing the name persists in backend PostgreSQL and survives reload | Edit name through the backend, reload, verify the backend row | Target |
 | 1.27 | A failed save shows an error. "Saved" appears only after success (today `MyProfilePage.tsx:64-68` ignores the result) | Make the save fail (wrong id or offline); error shown, no "Saved" | Target |
 | 1.28 | Organisation rename and invite use the real organisation id | Rename, reload, name stays; invite row appears with the real organisation id | Target |
 | 1.29 | Password change works with the real session and shows Supabase's error text in plain words | Change password; log in with the new one | Target |
@@ -133,6 +136,9 @@ Screens: Projects, Project detail, Upload Center (nine-step wizard). Blueprint s
 | Detection zone polygon, counting lines and directions | State inside the two canvas components, not reachable by the page | canvas files |
 | Estimates, queue position, cost text | Fixed text. Decoration only | 387-392, 415-424 |
 
+<!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD4/O19: reconcile approved typed metadata and freeze/snapshot rules. Documentation correction; runtime implementation pending. -->
 ### 2D Wizard: what must be sent to the backend
 
 | ID | Field | Sent to backend? | Tag | Src | Link |
@@ -145,25 +151,28 @@ Screens: Projects, Project detail, Upload Center (nine-step wizard). Blueprint s
 | 2.25 | Confidence threshold | Yes, as a number from 0.10 to 0.95 | Target | B §6 Analysis | AN-3 |
 | 2.26 | Detection zone: list of points | Yes, as positions relative to the real video frame (0 to 1), not the 480×270 board | Target | B §6 Analysis | AN-1, AN-4 |
 | 2.27 | Counting lines: two points plus direction each | Yes, same coordinate rule. Direction is defined against the order of the two points | Target | B §6 Analysis | AN-2, AN-4 |
-| 2.28 | Camera ID, Road name, Recording date, Start time, End time, Weather, Notes | Not decided. Default: yes, as optional text saved with the upload | Open | C | O19 |
+| 2.28 | Camera ID, Road name, Recording date, Start time, End time, Weather, Notes | Yes, optional fields: date and two times are typed; other fields are text. FD4 freezes fields after the first job except notes and preserves job/report snapshots | Decided | FD4 | O19 |
 | 2.29 | Generate report | Not decided. Default: yes, as a job option | Open | C | O22 |
 | 2.30 | Anonymize plates | Not decided. Default: no; treated as decoration | Open | C | O21 |
 | 2.31 | Overlap (IoU), frame skip, batch size, classes of interest, maximum length: the blueprint requires them; the wizard has no control | Not decided. Default: no new controls; server defaults | Open | B §6 Analysis | O23 |
 | 2.32 | Estimates, queue position, GPU-hours, price text | No. Shown only if the server returns a real value; otherwise hidden or "Not available" | Open | C | O25 |
 | 2.33 | The client's file name | Display text only. Never used as a path (see 4.50) | Target | S | D4 |
 
+<!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD8: require exactly one ready video. Documentation correction; runtime implementation pending. -->
 ### 2E Wizard: behaviour
 
 | ID | Requirement | Tag | Src | Link |
 |---|---|---|---|---|
-| 2.40 | Continue is disabled until the step is valid: a project is chosen (new names not empty or only spaces) and at least one real uploaded file exists | Target | B §6 | UP-2 |
+| 2.40 | Continue requires a valid project and exactly one real completed upload; reject multi-file selection and clear dependent preview/configuration state when replacing the video | Decided | FD8 | UP-2 |
 | 2.41 | The step bar cannot jump forward past an incomplete step. Going back is allowed | Target | C | UP-1 |
-| 2.42 | Real upload progress and a Retry button on failure; removing a file cancels its upload | Target | B §6 Uploads | UP-4 |
+| 2.42 | Real upload progress and Retry. Unknown network outcome reuses the key to discover status; receiving returns upload_in_progress; a confirmed failed upload needs a fresh key/UUID. Removing a file cancels its active transfer | Decided contract | FD15 | UP-4 |
 | 2.43 | A refused file shows the server's reason in plain words (type, size, length) | Target | B §6 Uploads | UP-3 |
 | 2.44 | Preview shows real size, length, resolution and frame rate read by the server, and a real frame or clip | Target | B §6 Uploads | UP-5 |
 | 2.45 | The two drawing boards sit on a real frame of the uploaded video and pass their points to the wizard (layout unchanged) | Target | B §6 Analysis | AN-1, AN-2 |
-| 2.46 | A job cannot be queued without at least one counting line, because a count is a line crossing (R1). Only SCOPE R1 supports this; the blueprint treats lines and zones as separate settings and also aggregates "by zone". Conflicts with 2.47 (zone optional). Default: at least one line OR one zone | Open | S R1 | PR-4, O42 |
-| 2.47 | A detection zone is required. Together with 2.46 the default is: at least one counting line or one zone (O42, O28) | Open | B §6 Analysis | O28, O42 |
+| 2.46 | Queue requires at least one line or one zone; lines select line-crossing mode, otherwise zone-presence mode | Decided | S R1, FD1 | O42 |
+| 2.47 | A zone is optional when a line exists; zone-only mode requires at least one zone | Decided | FD1 | O42; separate geometry choices remain open |
 | 2.48 | Review shows what the user actually chose, not fixed text | Target | C | AN-4 |
 | 2.49 | The Queue step makes one request that creates a versioned job from upload id plus saved configuration. It shows the real job id, then goes to `/job-queue` | Target | B §8 step 8 | PR-1, AN-4 |
 | 2.50 | A page refresh in the middle of the wizard loses the draft | Open | C | O29 |
@@ -203,8 +212,8 @@ Screens: Processing, Job Queue, Dashboard, Reports, notifications. Blueprint spr
 | 3.19 | A report is created from a completed analysis. It holds method, input details, configuration, counts, trends and evidence | Target | B §6 Reports | RP-2, RP-5 |
 | 3.20 | Reports filter by project, period, class, direction and zone | Target | B §6 Reports | RP-4 |
 | 3.21 | Export as CSV and as PDF. Each export has the time it was made and the analysis version | Target | B §6 Reports | RP-3, RP-5 |
-| 3.22 | Making the same report twice gives one report, not two (safe to repeat) | Target | B §6 Reports | RP-2 |
-| 3.23 | Counts are labelled as estimates, with confidence and method | Target | B §11 | R2 |
+| 3.22 | Repeated normal creation returns version 1; regenerating from the same source report returns the same server-assigned successor, with no duplicate notification | Decided contract | FD17 | RP-2 |
+| 3.23 | Label estimated Line crossing count or Zone presence count with confidence and method. Sum selected buckets; separate methods in dashboards and reports | Decided | FD1–FD2 | R2 |
 | 3.24 | Whether Excel export and a share link are offered (SCOPE lists Excel on the screen; the blueprint names CSV and PDF only). The Share button is fake today (`ReportsPage.tsx:58-61`); Print works (`:63-64`) | Open | S, B | O31 |
 | 3.25 | Dashboard shows comparisons (for example between periods or projects), and every KPI links to its project or report | Target | B §6 Dashboard | DB-2 |
 
@@ -224,7 +233,7 @@ What the user must see, per state (all Target, B §6 Processing, B §8):
 | ID | State | The screen must show | Buttons |
 |---|---|---|---|
 | 3.34 | `queued` | "Queued", queue position if the server knows it, time queued | Cancel |
-| 3.35 | `running` | Stage name, real progress, frames processed, elapsed time, time left if known | Cancel only if the worker can stop safely |
+| 3.35 | `running` | Stage name, real progress, frames processed, elapsed time, time left if known | FD5: supervisor accepts cancellation independently of engine batches; remains running until confirmed stopped |
 | 3.36 | `completed` | Counts, evidence, link to the report, completion time | Create report, Rerun |
 | 3.37 | `failed` | Safe message in plain words, diagnostic id, time of failure | Retry if retryable, otherwise Rerun |
 | 3.38 | `cancelled` | Who and when. Partial results are not presented as final | Rerun |
@@ -291,19 +300,22 @@ Blueprint sprints: 2, 3, 6.
 | 4.34 | API tests cover validation, authorization, status transitions and errors (B §10). The specific HTTP codes are a Proposal, not in the blueprint: 400 or 422 bad input, 401 not signed in, 403 not allowed, 404 not found (including unknown job id, replacing 200 `not_found`), 413 too large, 415 wrong type, 409 not allowed in this state | Proposal | B §10 (tests only) | R4c |
 | 4.35 | Every route declares its response model; status, type and level fields use fixed lists that match the frontend `types/` | Target | B §7 | GAP-5, GAP-7 |
 | 4.36 | Field names stay as the frontend uses them (camel case, as today) unless the user approves a change | Target | R | GAP-5 |
-| 4.37 | A contract test compares each response with the frontend type of the same name | Target | B §13 | GAP-19 |
+| 4.37 | Contract tests compare responses with the agreed types, including FD2 method-filtered/grouped analytics; current frontend types require adaptation before integration | Target | B §13, FD2 | GAP-19 |
 | 4.38 | Inputs are checked before work starts: ids exist, lines and zone points are inside 0 to 1, confidence is in range, tracker and model are supported | Target | B §8 failure | AN-4 |
 | 4.39 | Repeating a request (upload retry, job retry, report creation) never creates a duplicate final result | Target | B §6, §8 | PR-9, RP-2 |
 | 4.40 | Rate limits on uploads and sign-in. Limits not stated by the blueprint | Open | B §9 S6 | O43 |
 | 4.41 | Settings (API name, prefix, CORS, database) load from the environment. Today fixed in code (`core/config.py:5-12`, `database.py:4`) | Target | B §14.2 | GAP-1 |
-| 4.42 | Audit events are recorded for sign-in, uploads, job changes, report creation, member and role changes and refused requests (the `AuditEvent` entity). Retention of audit records is controlled by a setting; the period is Open (O10) | Target | B §7, §9 S6 | GAP-16, O10 |
+| 4.42 | Audit events are recorded for sign-in, uploads, job changes, report creation, member and role changes and refused requests (the `AuditEvent` entity). Automatic audit retention is disabled (FD7); a separate approved policy is required before deletion can be supported | Target | B §7, §9 S6 | GAP-16, O10 |
 | 4.43 | Retention controls: source media, result media and audit records are deleted or kept according to settings. Values are Open | Target | B §9 S6 | O10 |
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD15/FD19: clarify filename validation and upload retries. Documentation only; runtime implementation pending. -->
 ### 4D Upload defects D4 and D3 (acceptance)
 
 | ID | "Fixed" means | How it will be checked | Tag |
 |---|---|---|---|
-| 4.50 | **D4.** The saved file name never contains any part of the client's name. The file is saved as `<id>.<extension>` with the extension from an allowed list. The original name is kept only as display text, cleaned and shortened. Cause today: `upload_service.py:30` | Upload files named `../x.mp4`, `a/b.mp4`, `C:\x.mp4`, `x.exe` and a 300-character name. Every accepted file lands inside the uploads folder under a generated name; `x.exe` is refused; the display name is clean | Target |
+| 4.50 | **D4.** The saved file name never contains any part of the client's name. The file is saved as `<id>.<extension>` with the extension from an allowed list. The original name is kept only as display text, cleaned and shortened. Cause today: `upload_service.py:30` | Upload files named `../x.mp4`, `a/b.mp4`, `C:\x.mp4`, `x.exe` and a 300-character name. Every accepted file lands inside the uploads folder under a generated name; `x.exe` is refused even with valid video bytes; an allowed filename extension must also match validated content. The saved extension comes from content, not client path text; the display name is clean | Target |
 | 4.51 | **D4.** The job no longer takes its project name from the file name (`upload_service.py:45`); the project comes from the chosen project | Create a job; its project is the one chosen | Target |
 | 4.52 | **D3.** The file is written in pieces and stops as soon as it passes the size limit. The half-written file is deleted and the user gets a message naming the limit. Cause today: `upload_service.py:32` reads everything into memory with no check | Upload a file over the limit. Refused with 413; nothing remains on disk; memory use does not grow by the file size | Target |
 | 4.53 | **D3.** After saving, the type is checked by content and the length by reading the video. A file that fails is deleted and the reason is returned (wrong type, too long, unreadable) | Upload a text file renamed `.mp4`, a video over the length limit, a valid short video. First two refused with a reason; the third accepted | Target |
@@ -314,6 +326,9 @@ Item 4.54 points to O8 (default: not decided; ask before accepting 20 GB) and O1
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:45 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD10: incomplete decoding cannot silently complete a job. Runtime implementation pending. -->
 ## Deliverable 5 — AI pipeline
 
 Blueprint sprints: 3 and 4. Pipeline in order: video load, frame read, detect, track, count, aggregate, annotate.
@@ -323,13 +338,13 @@ Blueprint sprints: 3 and 4. Pipeline in order: video load, frame read, detect, t
 | 5.1 | Video load only checks that the file exists (`video_loader.py:5-9`) | As built | C | PR-2 |
 | 5.2 | Video load opens the file with a real video reader and returns length, resolution, frame rate and frame count. An unreadable file fails with a clear reason | Target | B §6 CV | UP-5 |
 | 5.3 | Frame read returns a fixed batch with `frame_count = 6` (`frame_reader.py:8,12-13`) | As built | C | GAP-13 |
-| 5.4 | Frame read hands over real frames in order, a batch at a time, with frame number and time. It never holds the whole video in memory | Target | B §6 CV | GAP-13 |
+| 5.4 | Read real ordered batches with frame number/time and bounded memory. Require verified clean EOF; decoder/I/O errors or ambiguous termination fail without partial results. Frame-count estimates alone cannot establish EOF | Decided behavior; reader choice open | FD10 | GAP-13 |
 | 5.5 | Detection passes the whole video path to YOLO (`yolo_detector.py:114-117`; SCOPE §5) | As built | S | PR-2 |
 | 5.6 | Detection works on frames from 5.4, keeps confidence and frame reference, and keeps only the classes of interest | Target | B §6 CV | PR-2 |
 | 5.7 | Tracker makes one new track per detection (`bytetrack_tracker.py:13-27`) | As built | C | PR-3 |
 | 5.8 | Tracker keeps the same id for the same vehicle across frames. Tracker is chosen per job (ByteTrack, BoT-SORT, SORT). An unsupported name is refused, not replaced silently | Target | B §6 CV | PR-3, GAP-12 |
 | 5.9 | Counter returns the number of tracks (`counter.py:6`). Every function in `analytics.py` raises `NotImplementedError` | As built | C | R1a, PR-4 |
-| 5.10 | A vehicle is counted once for each line it crosses, in the direction it crosses. Small jitter near a line does not count twice | Target | B §6 CV | R1, PR-4 |
+| 5.10 | Count once per track per allowed line crossing. Clear stale crossing candidates after returning to the original confirmed side; reversed or out-of-segment crossings cannot reuse earlier evidence. Zone-only mode follows FD1 | Decided correction | FD12, FD1 | R1, PR-4 |
 | 5.11 | Counts are grouped by class, direction, time bucket and zone | Target | B §6 CV | GAP-11 |
 | 5.12 | Length of the time bucket, and whether times count from the video start or from the recording clock time. Default: 15 minutes from video start, shifted by the recorded start time | Open | B §6 CV | O34 |
 | 5.13 | Other analytics stubs (speed, density, queue length, turning, lane counts, peak hour) are not part of the blueprint list | Open | C | O35 |
@@ -337,7 +352,7 @@ Blueprint sprints: 3 and 4. Pipeline in order: video load, frame read, detect, t
 | 5.15 | Annotated frames and an output video are produced when enabled, stored away from the source, with their path and size recorded | Target | B §6 CV | PR-10, GAP-14 |
 | 5.16 | Whether annotated output is on by default | Open | B §6 CV | O36 |
 | 5.17 | Progress reflects real frames done out of total. Today fixed at 0, 35, 100 (`upload_service.py:70,81,96`) | Target | B §6 Processing | PR-5 |
-| 5.18 | The pipeline checks a stop signal between batches so a cancelled job stops safely | Target | B §6 Processing | PR-8 |
+| 5.18 | Pipeline checks cooperative stop between batches; the independent supervisor enforces cancellation and deadlines even during blocked calls, terminating the isolated analysis process after configured grace | Decided mechanism; timing open | FD5 | PR-8, O46/O81 |
 | 5.19 | Any failure inside the pipeline becomes a short code (for example unreadable video, model missing, out of memory) plus a diagnostic id. Today one catch-all wraps the raw text (`pipeline.py:72-73`) and the raw text goes into the log list the API returns (`upload_service.py:133`) | Target | B §8 | R5, GAP-9 |
 | 5.20 | Result is stored, not only logged. Today the count appears only in an in-memory job log message (`upload_service.py:109`) | Target | B §7 | R6 |
 | 5.21 | Every result links to its upload, configuration version, model version and job id | Target | B §7 | R6, GAP-14 |
@@ -360,13 +375,16 @@ Blueprint sprints: 3 and 4. Pipeline in order: video load, frame read, detect, t
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD18: deferred database guards require explicit constraint execution. Documentation only; runtime implementation pending. -->
 ## Deliverable 6 — Quality and delivery
 
 Blueprint sprints: 0 and 7.
 
 | ID | Requirement | Tag | Src | Link |
 |---|---|---|---|---|
-| 6.1 | Frontend has `lint`, `build`, `dev` and `typecheck` scripts (`package.json:7-11`) and an ESLint config. Neither was run | As built | C | GAP-1 |
+| 6.1 | Rechecked 2026-11-07: `npm run typecheck` passed; `npm run lint` failed with 21 errors and 2 warnings. Includes unused `AuthLayout` in App.tsx and missing effect dependency in OrganizationPage.tsx. Frontend fixes remain outside this backend documentation change | Verified checks | C | GAP-1 |
 | 6.2 | No tests exist outside `.venv` and `node_modules` | As built | S | GAP-19 |
 | 6.3 | Backend tests: services, repositories, schemas, analytics; API tests for bad input, who may do what, state moves and errors; pipeline tests on a short fixed video; tracker and detector factories tested without running a model | Target | B §10 | GAP-19 |
 | 6.4 | Frontend tests: key services and data changes; smoke test of every route; sign-in flow | Target | B §10 | GAP-19 |
@@ -478,6 +496,9 @@ AC-15 is O15.
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD20/FD21: distinguish trace identifiers and protect retained source media. Documentation only; runtime implementation pending. -->
 ## Non-functional requirements
 
 | ID | Area | Requirement | Tag | Src |
@@ -489,10 +510,10 @@ AC-15 is O15.
 | NFR-5 | Security | CORS origins come from settings (today fixed to three localhost ports, `core/config.py:8-12`) | Target | B §14.2 |
 | NFR-6 | Privacy | No face, licence-plate or identity recognition without separate product, legal and consent review | Target | B §5, §11 |
 | NFR-7 | Privacy | Logs remove secrets and personal data | Target | B §12 |
-| NFR-8 | Privacy | How long source and result video are kept; deletion behaviour | Open | B §8 step 15 |
+| NFR-8 | Privacy | Periods remain O10. FD21: source deletion skips queued/running jobs and serializes with queue/retry; deleted or absent sources cannot start new analysis. Object deletion precedes its marker | Decided safeguards; periods open | FD7, FD21 |
 | NFR-9 | Errors | Users never see stack traces, paths or credentials. Messages are plain words | Target | B §6 |
 | NFR-10 | Reproducibility | Same input and configuration give a repeatable result (5.23) | Target | B §2 |
-| NFR-11 | Logging and tracing | Every API request, job and worker line carries one correlation id, and requests are traced from API to worker; the job id is that id. Job logs exist now with a `job_id` field (`upload_service.py:112-125`); whether it appears in output is not verified | Target | B §12 |
+| NFR-11 | Logging and tracing | Each HTTP attempt has request_id. Job-related audit/log records add job_id; worker records add attempt_no and the creation request_id. Retry/cancel requests retain their own request IDs. Requests without a job omit job_id. Existing log propagation is not verified | Decided contract | FD20 |
 | NFR-12 | Performance | The blueprint gives no numbers (no speeds, no response times, no video lengths). Targets (O17). Rate limits are O43 and the repeat tolerance is O44 | Open | B §12 |
 | NFR-13 | Accessibility | Keyboard use, labels, focus and contrast pass checks (B §10). The wizard switches have no accessible name (`UploadPage.tsx:463-466`) and the drawing boards use mouse events only (`CountLineCanvas.tsx:95-98`, `DetectionZoneCanvas.tsx:63`) | Target | B §10 |
 | NFR-14 | Motion | Animations and pulsing respect the operating-system reduced-motion setting, and the in-app setting. Today no code reads the setting (searched `useReducedMotion`, `prefers-reduced`: none) and "Reduce motion" on `SettingsPage.tsx:40,303` is local state in the lines found | Target | user rule |
@@ -509,7 +530,7 @@ From SCOPE section 2. "Built" shows what the code does today.
 
 | Rule | Statement | Built | Target requirements |
 |---|---|---|---|
-| R1 | A count is the number of distinct vehicles crossing a configured line, by class, direction, interval | No: count is number of tracks (R1a) | 5.9 to 5.11 |
+| R1 | Count once per track per line, or per zone without lines; method-labelled sums (FD1–FD2) | No: existing count is number of tracks (R1a) | 5.9 to 5.11; LOW_LEVEL_DESIGN section 18 |
 | R2 | Counts are estimates with confidence and method | No | 3.23 |
 | R3 | Uploads: video only, type by content, size and length limits | Partly: picker filter only | 4.52, 4.53, 2.43 |
 | R4 | Job words: queued, running, completed, failed, cancelled | No: `processing` used | 3.30 to 3.33 |
@@ -548,7 +569,7 @@ Owner for all: the user. Default is used until the user answers.
 | ID | Question | Default |
 |---|---|---|
 | O1 | Auth provider: Supabase or own FastAPI JWT | Supabase; backend verifies its tokens |
-| O2 | Production database | PostgreSQL; SQLite for local |
+| O2 | Production database | PostgreSQL locally and in production (O72 approved; hosting remains open) |
 | O3 | Production file storage | S3-compatible object storage; local folder in development, behind a storage interface |
 | O4 | Queue / worker | FastAPI background task until Sprint 3; then a separate worker with a jobs table. No product named |
 | O5 | Hosting | Not chosen. No default. Needed before Sprint 7 |
@@ -565,7 +586,7 @@ Owner for all: the user. Default is used until the user answers.
 | O16 | Create the Hooks layer from `ARCHITECTURE.md` | No; pages use services directly, as today |
 | O17 | Performance targets (blueprint gives none) | None set. Measure first, then propose numbers |
 | O18 | Video formats accepted | MP4, MKV, AVI as the screen says, checked by content |
-| O19 | Which metadata fields are stored (camera, road, date, times, weather, notes) | All stored with the upload as typed values (a date and two times) plus text for the rest |
+| O19 | Stored metadata fields and types | Decided by FD4: optional camera, road, weather and notes text; recorded date and two typed times. Edit/freeze and snapshot rules are in LOW_LEVEL_DESIGN section 18; camera timezone handling remains O68 |
 | O20 | Tracker list in the wizard: DeepSORT is offered but no DeepSORT code exists; blueprint lists ByteTrack, BoT-SORT, SORT | Offer only trackers the backend supports; SORT replaces DeepSORT |
 | O21 | "Anonymize plates" switch (plate blurring needs plate finding, which the blueprint excludes) | Not sent; treated as decoration until legal review |
 | O22 | "Generate report" switch | Sent as a job option; a report is made when the job completes |
@@ -666,3 +687,11 @@ Sprints are blueprint section 9: 0 foundation, 1 auth, 2 projects and uploads, 3
 | NFR-18 | not in SCOPE (Proposal) | 6 |
 | NFR-13 to NFR-15 | R10 | 7 |
 | NFR-16, NFR-17 | GAP-17 | 6 and 7 |
+
+
+### Approved flow correction reference — 2026-11-07
+
+[LOW_LEVEL_DESIGN section 18](LOW_LEVEL_DESIGN.md#18-approved-backend-flow-corrections) records FD1–FD8: counting modes and totals, generated storage keys, metadata locking and snapshots, independent worker supervision with attempt checks, transactional notifications, retention restrictions, and one video per workflow. Adrishikhar Barua approved these documentation corrections; Codex edited them. Runtime implementation remains pending. Dated approved decisions override earlier blueprint statements and draft defaults; unrelated open items remain open.
+
+
+Approved verification detail (FD18): tests must force deferred constraints with SET CONSTRAINTS ALL IMMEDIATE after the intended transaction sequence, or commit isolated transactions. Rollback-only tests do not verify the completed-result guard. FD16 list responses use items/nextCursor envelopes on migrated routes; dashboard uses FD2 grouped counts, with frontend adapters migrated alongside contract changes.

@@ -1,3 +1,8 @@
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD14/FD17: align invitation delivery and report version semantics. Documentation only; runtime implementation pending. -->
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Changed by: Codex. Fix: Reconcile approved backend flow and database decisions; see LOW_LEVEL_DESIGN section 18. Runtime implementation pending. -->
 # Johnson Road — Data Model
 
 Version: 0.3 · Date: 2026-11-07 · Status: **draft, awaiting approval**
@@ -6,9 +11,12 @@ Change in 0.3: review fixes. Purge exception for the lock triggers (`jr.purge` s
 
 The runnable-looking SQL is `docs/schema.sql`. This file explains it in plain words. It builds on SCOPE v0.4, REQUIREMENTS v0.3 and ARCHITECTURE v0.2 and inherits their IDs (R, F, D, GAP, AC, NFR, O1 to O56).
 
-> **The SQL was NOT executed and NOT validated.** Nobody ran `schema.sql` on any database, and nothing in it was checked by a tool. It was only written by reading the existing files. Expect small errors. The first step after approval is to run it on an empty test database. The file is for a fresh, empty PostgreSQL 16 database only and runs as one transaction (`BEGIN` ... `COMMIT`); there is no `IF NOT EXISTS` on purpose. Later changes need the migration tool (O63).
+<!-- Adrishikhar - 7 November 2026, 17:45 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Distinguish completed static checks from pending PostgreSQL execution. Runtime implementation pending. -->
+> **The SQL has not been executed or validated against PostgreSQL.** Static consistency and whitespace checks have been performed; they do not prove SQL execution, trigger behavior or service invariants. Run the draft on a fresh, empty PostgreSQL 16 test database and exercise its constraints before using it as a migration. It runs as one transaction (`BEGIN` ... `COMMIT`), intentionally without `IF NOT EXISTS`. Later changes need the migration tool (O63).
 
-> **SQLite cannot run this file.** Eight of the 31 invariants in section 6 need Postgres-only triggers or `NULLS NOT DISTINCT` (8, 10, 11, 12, 17, 23, 27, 28). The file also uses `btrim()` (SQLite has `trim`), `jsonb_typeof()` inside a CHECK, and SQLite ignores foreign keys unless `PRAGMA foreign_keys=ON` is set on every connection. Decision O72 (Open) proposes PostgreSQL for local development too.
+> **SQLite cannot run this file.** Eight of the 31 invariants in section 6 need Postgres-only triggers or `NULLS NOT DISTINCT` (8, 10, 11, 12, 17, 23, 27, 28). The file also uses `btrim()` (SQLite has `trim`), `jsonb_typeof()` inside a CHECK, and SQLite ignores foreign keys unless `PRAGMA foreign_keys=ON` is set on every connection. Decision O72 (SCOPE section 9) approves PostgreSQL for local development too.
 
 ## Tag key
 
@@ -33,6 +41,9 @@ Every statement has exactly one tag. Tags are never mixed in one line.
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD3/FD4: include nested storage categories and metadata snapshot columns. Documentation correction; runtime implementation pending. -->
 ## 1. Conventions
 
 | Topic | Rule | Tag |
@@ -45,9 +56,9 @@ Every statement has exactly one tag. Tags are never mixed in one line.
 | Word sets | `CHECK (col IN (...))`, not Postgres enums. A new word needs a small migration and works in SQLite | Proposal |
 | Delete rules | No general soft delete. Projects are archived with `archived_at` and never hard-deleted. An upload whose file was removed by retention keeps its row (`source_deleted_at`) because results point to it. Foreign keys to a record that is evidence (uploads, configurations, jobs, results, artifacts, reports and the projects and organisations above them) are `ON DELETE RESTRICT`. `ON DELETE CASCADE` is used only for pure child rows: `counting_zones`, `zone_points` and `counting_lines` of one configuration, `job_attempts` and `job_events` of one job, `count_buckets` of one result, `report_files` of one report, `organization_members` and `organization_invites` of one organisation, `notifications`. "Delete organisation" (AC-1) is a purge run by the service in dependency order (O73). Users are suspended, not deleted: `organization_invites.invited_by` has no cascade, so deleting a user who sent an invite is refused | Open, O60 and O73, defaults as stated |
 | Money | Not needed. No payments, VAT, vendors or marketplace in this version | Target |
-| JSON columns | Used only for small bags that are read whole and never filtered: `projects.default_options`, `analysis_configurations.classes`, `reports.options`, `audit_events.details`, `settings.value`. Everything that is searched or checked (zone points, lines, counts) has real columns | Proposal |
+| JSON columns | Used only for small bags that are read whole and never filtered: `projects.default_options`, `analysis_configurations.classes`, `jobs.metadata_snapshot`, `reports.metadata_snapshot`, `reports.options`, `audit_events.details`, `settings.value`. Everything that is searched or checked (zone points, lines, counts) has real columns | Proposal |
 | Scoping | The database refuses a wrong pairing only along the chain project, upload, configuration, job, result, report (composite foreign keys such as `(project_id, organization_id)`), and for `based_on_id`, `rerun_of_job_id`, `notifications.job_id` and `job_events.attempt_no`. Every other link is a service rule, listed in section 6 invariant 5 | Proposal |
-| Storage keys | Files are named by a key (`<id>.<ext>`), never by a path and never by the client's file name (D4) | Target |
+| Storage keys | Backend-generated relative keys validated against LOW_LEVEL_DESIGN FD3: sources use `tmp/<upload-uuid>.part`, `<upload-uuid>.<ext>`, `previews/<upload-uuid>.jpg`; outputs use `jobs/<job-uuid>/attempts/<attempt>/<artifact-uuid>.<ext>` and `reports/<report-uuid>/<export-uuid>.<ext>`. Category-specific extensions, canonical UUIDs, positive attempts and root containment are mandatory. No machine paths or client filenames | Decided, FD3 |
 | Secrets | No password, no token, no key stored. Invite tokens are stored only as a hash | Target |
 
 ---
@@ -123,7 +134,7 @@ erDiagram
 - **Target**: the open-invite unique index (organisation, lower email, where not accepted and not revoked) cannot test `expires_at`, because `now()` is not allowed in an index condition. Service rule: when an invite expires the service sets `revoked_at` (a daily job, or on the next invite to the same email), otherwise an expired invite would block a new one.
 - **Open**: when the service revokes expired invites. Owner: the user. Default: on the next invite to the same email, plus a daily job (O74).
 - **Open**: invite lifetime. Owner: the user. Default: 7 days (O69).
-- **Open**: how the invite reaches the person. Owner: the user. Default: email through the sign-in provider (O38).
+- **Decided (FD14)**: pre-membership invitations go to the invited email, regardless of whether a users row exists. They do not create organisation notifications for non-members. Email provider and retry integration remain O38 implementation choices.
 - **Target**: onboarding creates `users` (if new), `organizations` and the owner membership in one database transaction, or nothing (REQ 1.13, 1.34, F11).
 - **Target**: the owner is created only by onboarding or by an owner's ownership transfer. An admin cannot create or promote an owner (service rule, fixes F12, REQ 1.35).
 - **Target**: transfer of ownership is one transaction made of two separate statements, in this order: first demote the old owner, then promote the new one. The partial unique index is not deferrable, so it is checked row by row, not at the end of the statement or at commit. A single UPDATE that swaps both roles, or promoting the new owner before demoting the old one, fails (the single-UPDATE case may also depend on row order). This order is a service rule and a test case (section 9).
@@ -155,7 +166,10 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 - **Target**: a row can be `ready` only when size, checksum, length, resolution and frame rate are all filled (CHECK).
 - **Target**: a refused or half-written file is deleted and no `ready` row remains (D3, REQ 4.52, 4.53). Whether a `failed` row is kept as a record: **Open**, owner the user, default: keep the row with its `failure_code` and no file.
 - **Open**: allowed extensions are `mp4`, `mkv`, `avi` as the screen says; the real list is O18. Max size and length are O8 and live in `settings`, not in this table.
-- **Open**: the optional wizard notes are all stored, as typed values for the date and the two times and as text for the rest (O19 default, wording changed in REQUIREMENTS). Start and end time use the camera's local clock, no zone (O68).
+<!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD4/O19: metadata fields are decided, with typed date/time values. Documentation correction; runtime implementation pending. -->
+- **Decided (FD4/O19)**: store the optional camera, road, weather and notes as text, recorded date as a date and start/end as times. Freeze all but notes after the first job; serialize metadata edits and job creation on the upload row and preserve immutable job/report snapshots. Camera timezone handling remains open (O68).
 - **Target**: PostgreSQL accepts `24:00:00` in a `time` column, so each of the two time columns has a CHECK that it is before `24:00:00`. The screen's default `24:00` (REQUIREMENTS 2C) is not a valid input time either. It must change to `23:59`, or the service refuses it with a clear message. Open, owner the user, default: change to `23:59` (O75).
 - **Target**: `preview_frame_key` holds one real frame for the drawing boards (REQ 2.45) and also serves as the project thumbnail. The frontend `Project.thumbnail` has no source today (section 5b).
 - **Target**: a repeated file is spotted by `checksum_sha256` (non-unique index). Default: warn only, do not block. This is **Open**, owner the user, default warn only.
@@ -165,7 +179,10 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 
 - **Target**: purpose: the choices used for one job, saved in versions. A configuration belongs to one upload, because zones and lines are drawn on that camera view.
 - **Target**: `analysis_configurations` columns: `upload_id`, `version_no` (1, 2, 3 per upload), `based_on_id`, `model_name`, `tracker` (`bytetrack`, `botsort`, `sort`), `confidence_threshold` (0.10 to 0.95), `iou_threshold`, `frame_skip`, `batch_size`, `classes` (short list of class names), `bucket_seconds`, `generate_report`, `annotated_output`, `locked_at`.
-- **Target**: the service writes the final value into every column, including server defaults when the user chose nothing (O23 default). So a stored configuration alone is enough to repeat a run (R8).
+<!-- Adrishikhar - 7 November 2026, 17:45 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD11: freeze resolved class names when saving the configuration. Runtime implementation pending. -->
+- **Decided (FD11)**: persist final values, including a nonempty explicit `classes` list. Resolve omitted/empty request classes from server defaults at save time and validate every element is a supported class name. Reject empty resolved defaults. SQL rejects stored empty/non-array classes and supplies no default; the service checks element types and model support. Retries/reruns never substitute current server defaults for the saved list. Other O23 control choices remain open.
 - **Open**: `bucket_seconds` default 900 (15 minutes from video start, shifted by recorded start time). Owner: the user. Default as stated (O34).
 - **Open**: `generate_report` default on (O22). `annotated_output` default on (O36).
 - **Target**: immutability. `locked_at` is set when the first job uses the version. After that the row, its zones, points and lines cannot be changed or deleted; a change is a new `version_no` (REQ 5.22, trigger in schema section 9, Postgres-only P6). One exception, needed so a user can be deleted: when the user who created a locked configuration is deleted, the database sets `created_by` to null. The trigger allows an update that changes only `created_by` to null and leaves every other column equal, and refuses everything else. The trigger on zones, points and lines checks both the old and the new row on UPDATE and refuses if either belongs to a locked configuration, so a row cannot be moved out of a locked configuration by changing `configuration_id` or `zone_id`. `based_on_id` must point to a version of the same upload (composite foreign key). Rows have `updated_at` while unlocked.
@@ -173,8 +190,8 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 - **Open**: a stronger purge design (a purge routine owned by a separate purge role, or `session_replication_role`). Owner: the user. Default: use the setting, and run purges only from the purge routine (O76).
 - **Target**: `counting_zones` plus `zone_points` (`seq`, `x`, `y`). Points are 0 to 1 of the real frame, not the 480 by 270 board (REQ 2.26). CHECK keeps every value between 0 and 1. At least three points per zone is a service rule.
 - **Target**: `counting_lines`: `x1,y1,x2,y2` (0 to 1, the two points must differ) and `direction` (`forward`, `backward`, `both`). Direction is read against the order of the two points (REQ 2.27).
-- **Open**: the exact meaning of `forward` (default: crossing from the left of the arrow point 1 to point 2 toward its right). Owner: the user. Default as stated (O66). The LLD must fix it before counting is built.
-- **Open**: whether a zone is required and whether a line is required (O28, O42). The tables allow zero zones. The default rule (at least one line or one zone) is checked by the service.
+- **Decided (O66, SCOPE section 9)**: forward crosses from the left of the arrow from point 1 to point 2 toward its right; backward is the opposite.
+- **Decided (O42, SCOPE section 9)**: at least one line or one zone is required, checked by the service. Zero zones is valid when a line exists; FD1 resolves zone-only counting.
 - **Proposal**: the dropped tracker DeepSORT is not in the CHECK set (O20 default). The screen still offers it today; the first migration must match the final list.
 
 ### 4.6 Jobs: `jobs`, `job_attempts`, `job_events`
@@ -186,6 +203,7 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 | Links | `organization_id`, `project_id`, `upload_id`, `configuration_id`, `rerun_of_job_id`, `created_by` | Target |
 | State | `status` (`queued`, `running`, `completed`, `failed`, `cancelled`), `stage`, `progress_percent`, `frames_total`, `frames_done`, `processing_fps`, `priority` | Target |
 | Timing | `queued_at`, `started_at`, `finished_at`, `last_heartbeat_at`, `timeout_seconds` | Target |
+| Source context | `metadata_snapshot` jsonb object, required and immutable from creation; metadata patch and queue lock the same upload row (FD4) | Decided |
 | Failure | `error_code`, `safe_message`, `diagnostic_id`, `is_retryable` | Target |
 | Cancel | `cancel_requested_at`, `cancel_requested_by` | Target |
 | Provenance | `attempt_no`, `worker_id`, `device`, `model_name`, `model_file_name`, `model_file_sha256`, `code_version` | Target |
@@ -196,9 +214,15 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 - **Target**: a `failed` row must carry `error_code`, `safe_message` and `diagnostic_id` (CHECK, R5). The raw error text is never stored in the database; it stays in the server log, found by `diagnostic_id`.
 - **Target**: `completed` is allowed only when a `job_results` row exists. Checked at commit by a deferred trigger (near REQ 3.33 and 5.20; not an exact quote of either). It also requires `progress_percent = 100`, `started_at` and `finished_at`.
 - **Target**: when the worker moves a job to `completed`, the database checks (CHECK constraints and the commit-time trigger) refuse the update unless `progress_percent = 100` and `finished_at` are set in that same update and `started_at` was already set when the job began running. The database does not fill them in; the worker must. The result row must be inserted while the job is still `running`, in the same transaction as the move to `completed`; the order is result first, then the status update.
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD13: reconcile observed progress with estimated totals. Documentation only; runtime implementation pending. -->
+- **Decided (FD13)**: when observed frames would exceed an estimate, atomically set frames_total NULL with the frames_done update; completion records observed counts in both fields. Percent remains below 100 until verified completion. Retry clears frame estimates and measured processing speed. The existing SQL CHECK is retained.
 - **Target**: model name and file identity, code version and device are filled when the job starts running. They record what actually ran (REQ 5.25).
-- **Target**: `last_heartbeat_at` lets a restart find jobs left `running` by a dead worker. Default action is `failed` and retryable (O40, the user has not decided). The timeout and retry limits have no default (O46).
-- **Open**: retry model. Default (REQUIREMENTS 3.32, "failed to queued"): a retry reuses the same job row, raises `attempt_no`, and the old attempt stays in `job_attempts`. The alternative is a new job row linked to the old one. Owner: the user. Default: same row with `job_attempts` (O57).
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Changed by: Codex. Fix: Fence attempts and separate liveness from processing. Runtime implementation pending. -->
+- **Decided (FD5)**: an independent supervisor heartbeats during loading, processing and storage. All worker writes check job, attempt, worker and running status; completion and recovery lock/recheck ownership. Numerical timing and retry settings remain open (O46/O81).
+- **Decided (O57, SCOPE section 9)**: retry reuses the job, increments `attempt_no` and preserves failed attempts. FD4: preserve immutable `metadata_snapshot`; same-configuration reruns copy it. New configurations take a fresh snapshot.
 - **Target**: a **Rerun** is always a new job; `rerun_of_job_id` links it to the earlier one in the same project (composite foreign key, REQ 3.32).
 - **Open**: `priority` column. The Supabase table and the frontend type have it. Default: kept, always `normal`, not used to order the queue (the worker takes the oldest `queued` row, ARCHITECTURE 6.2). Owner: the user (O61).
 - **Open**: `stage` names. Owner: the user. Default list in the order the pipeline runs: `queued`, `loading_video`, `reading_frames`, `detecting`, `tracking`, `counting`, `aggregating`, `annotating`, `finishing` (O70). The column is text, so the list can change without a migration.
@@ -219,12 +243,14 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 
 ### 4.7 Results: `job_results`, `count_buckets`
 
-- **Target**: `job_results`: one header row per completed job. Columns: `job_id` (unique), `upload_id`, `configuration_id`, `model_name`, `model_file_sha256`, `code_version`, `method` (`line_crossing`), `is_estimate` (true), `bucket_seconds`, `time_base` (`video_start` or `recorded_clock`), `frames_processed`, `detections_total`, `tracks_total`, `vehicles_counted`, `confidence_mean`, `confidence_min`, `confidence_max`.
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Changed by: Codex. Fix: FD1–FD2: store method and sum of event buckets, never a unique-vehicle claim. Runtime implementation pending. -->
+- **Target**: `job_results`: one header row per completed job. Columns: `job_id` (unique), `upload_id`, `configuration_id`, `model_name`, `model_file_sha256`, `code_version`, `method` (`line_crossing` or `zone_presence`), `is_estimate` (true), `bucket_seconds`, `time_base` (`video_start` or `recorded_clock`), `frames_processed`, `detections_total`, `tracks_total`, `vehicles_counted`, `confidence_mean`, `confidence_min`, `confidence_max`.
 - **Target**: the header repeats the model identity from the job on purpose, so a result still says which model made it even if a retry later used a different file. The pair `(job_id, upload_id, configuration_id)` is a composite foreign key to the job, so the three cannot disagree.
 - **Target**: counts are labelled as estimates with method and confidence (R2, REQ 3.23): `method`, `is_estimate`, the confidence columns.
-- **Target**: `count_buckets`: one row per time bucket, vehicle class, direction (`forward` or `backward`) and line or zone. Columns: `result_id`, `job_id`, `upload_id`, `configuration_id`, `bucket_index`, `bucket_start_s`, `vehicle_class`, `direction`, `line_id`, `zone_id`, `vehicle_count`, `confidence_mean`.
-- **Target**: a count row can name a line or zone only from its own configuration (composite foreign key). At least one of line or zone must be filled (CHECK). This follows the O42 default and will change if the user decides differently.
-- **Target**: no duplicate rows: unique on result, bucket, class, direction, line, zone, with empty line or zone counting as equal (`NULLS NOT DISTINCT`, PostgreSQL 15 or newer, P5). SQLite has no such option; the service must check.
+- **Target**: `count_buckets`: one row per time bucket, vehicle class, direction (`forward`, `backward` or `not_applicable`) and line or zone. Columns: `result_id`, `job_id`, `upload_id`, `configuration_id`, `bucket_index`, `bucket_start_s`, `vehicle_class`, `direction`, `line_id`, `zone_id`, `vehicle_count`, `confidence_mean`.
+- **Decided (FD1)**: bucket references must belong to its configuration. Line buckets require a line and forward/backward direction; zone-only buckets require a zone, no line and `not_applicable`. The service verifies method/configuration consistency; see LOW_LEVEL_DESIGN section 18.
+- **Target**: no duplicate rows: unique on result, bucket, class, direction, line, zone, with empty line or zone counting as equal (`NULLS NOT DISTINCT`, PostgreSQL 15 or newer, P5). PostgreSQL enforces this; SQLite is not a supported target.
 - **Target**: result rows are written in the same transaction that sets the job `completed`, so a failed or cancelled attempt leaves no partial counts.
 - **Target**: a `job_results` row can be inserted only while its job is `running` (`BEFORE INSERT` trigger, Postgres-only). The result is inserted first, then the job is set `completed` in the same transaction.
 - **Target**: deleting a result after completion is a service rule, not a trigger. A trigger on delete would also block the organisation purge (O73) and cannot tell the two apart. Results are deleted only by the purge. `count_buckets` rows being added only while the job is running is also a service rule.
@@ -240,9 +266,11 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 
 ### 4.9 Reports: `reports`, `report_files`
 
-- **Target**: `reports` columns: `organization_id`, `project_id`, `job_id`, `title`, `report_type` (`summary`, `daily`, `weekly`, `peak`, the set in `types/report.ts:7`), `options` (jsonb filters: period, classes, directions, zone), `options_hash`, `version`, `vehicles_counted`, `generated_by`, `generated_at`.
-- **Target**: making the same report twice gives one report (REQ 3.22). The key is `(job_id, report_type, options_hash, version)`. A repeat request finds the existing row.
-- **Proposal**: `version` starts at 1; the user asking to regenerate on purpose adds version 2. The blueprint says reports have a version only through the analysis version; this meaning is mine.
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Changed by: Codex. Fix: FD2/FD4: reproducible report totals and context. Runtime implementation pending. -->
+- **Target**: `reports` columns: `organization_id`, `project_id`, `job_id`, `title`, `report_type` (`summary`, `daily`, `weekly`, `peak`, the set in `types/report.ts:7`), `options` (jsonb filters: period, classes, directions, zone), `options_hash`, `version`, `vehicles_counted`, `method`, `metadata_snapshot` (copied from the job; exports never read live upload metadata), `generated_by`, `generated_at`.
+- **Target**: making the same report twice gives one report; regenerating from the same source report twice returns the same successor (REQ 3.22, FD17). The key is `(job_id, report_type, options_hash, version)`. A repeat request finds the existing row.
+- **Decided (FD17)**: normal report creation returns version 1 for its job/type/normalized options. Regeneration from a source report creates or returns its version plus one; lock the job, let the server assign the version, and reuse the unique successor on repeats. Copy the source method and snapshot. No client-assigned version.
 - **Target**: a report can be made only from a `completed` job of the same project (service rule; the foreign key proves the project match). Foreign keys from a report to its project and job are RESTRICT; only `report_files` cascade from their report.
 - **Target**: `report_files`: one row per exported file: `format` (`csv`, `pdf`), `storage_key`, `size_bytes`, `checksum_sha256`, `analysis_version` (configuration version and model written into the file), `generated_at` (the export time, REQ 3.21). One file per format per report.
 - **Open**: Excel and share link are not in the CHECK set (O31 default CSV and PDF only).
@@ -250,7 +278,9 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 
 ### 4.10 `notifications`
 
-- **Target**: purpose: tell a person that an upload or job finished or failed (REQ 3.11).
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Changed by: Codex. Fix: Make notification records durable with state changes. Runtime implementation pending. -->
+- **Decided (FD6)**: insert notifications in the same transaction as the upload/job/report transition. Failure rolls back both; entity locking and actual-transition checks prevent duplicates. Browser delivery and email are separate.
 - **Target**: columns: `user_id`, `organization_id`, `kind` (`upload_ready`, `upload_failed`, `job_completed`, `job_failed`, `job_cancelled`, `report_ready`, `invite`, `info`), `title`, `detail`, `link` (an address inside the app), `job_id`, `read_at` (empty = unread). `(job_id, organization_id)` is a composite foreign key to the job, so a notice cannot point to a job of another organisation (skipped when `job_id` is empty). That `user_id` is a member of the organisation is a service rule.
 - **Proposal**: `read_at` replaces the Supabase boolean `read` so the table also says when it was read.
 - **Proposal**: the kind list is mine; the Supabase table had free text `type` (`create_all_tables.sql:115`).
@@ -264,7 +294,9 @@ Purpose: one stored video and what the server learned about it (blueprint sectio
 - **Target**: plainly: this protection is NOT enforced against the table owner (or a superuser), who can drop or disable a trigger or grant themselves anything. It holds only after the roles and grants exist (O71) and the application does not connect as the owner. In `schema.sql` the grants are a commented block to be run once by the database owner after the roles are created; until then only the triggers protect the table, and only against a connection that is not the owner.
 - **Proposal**: logging refused requests (AC-14) is mine; the blueprint names audit events only.
 - **Open**: store the caller's IP address. Owner: the user. Default: not stored, because NFR-7 asks logs to remove personal data (O62).
-- **Open**: audit retention (O10, no default).
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Changed by: Codex. Fix: Preserve audit and completed results. Runtime implementation pending. -->
+- **Decided (FD7)**: automatic audit/result/bucket deletion is disabled. Reject non-null audit/result retention settings until a separately approved compatible policy exists. Audit remains append-only.
 
 ### 4.12 `settings`
 
@@ -327,7 +359,7 @@ Under B none of these tables is the record (O48). Columns map as follows. "Dropp
 | `Project.status` | Computed (4.3). Word `processing` becomes `running` for jobs (O7); the project word set is **Open**, default keep `processing` for projects as the screen shows | Open |
 | `Project.duration` | Computed: sum of `uploads.duration_seconds` | Target |
 | `Project.videoCount` | Computed: count of ready uploads | Target |
-| `Project.vehicleCount` | Computed: latest completed job's `vehicles_counted` per upload, summed | Target |
+| `Project.vehicleCount` | FD2: latest completed job per upload, summed separately by method; a scalar requires a method filter | Decided |
 | `Project.avgFlow`, `peakHour` | Computed from `count_buckets` | Target |
 | `Project.createdAt`, `updatedAt` | `projects.created_at, updated_at` | Target |
 | `Project.thumbnail` | Computed: latest upload's `preview_frame_key`. No source today | Target |
@@ -355,12 +387,12 @@ Under B none of these tables is the record (O48). Columns map as follows. "Dropp
 | `UploadFile.id, name, size` (`upload.ts:1-10`) | `uploads.id, original_name, size_bytes` | Target |
 | `UploadFile.duration, resolution, fps` | Formatted from the upload columns | Target |
 | `UploadFile.progress`, `status` | **Not stored.** Browser-side during transfer; after it `uploads.status` (`receiving`, `ready`, `failed`) | Target |
-| `ReportAnalytics.trafficVolumeByHour`, `vehicleClassBreakdown`, `weeklyTrafficTrend`, `peakHours` (`report.ts:17-22`) | Computed from `count_buckets` | Target |
+| Existing `ReportAnalytics` count series (`report.ts:17-22`) | FD2 response moves these into each `countsByMethod` group, computed from the same selected job buckets and method; frontend adaptation pending | Decided contract |
 | `PeakHour.road` | `uploads.road_name` | Target |
 | `TrafficPoint.hour, vehicles, flow` (`dashboard.ts:15-19`) | Computed from `count_buckets`; `flow` is formatted text | Target |
 | `VehicleClassBreakdownItem.color` | **No source.** A display choice made by the frontend | Open |
-| `DashboardKpis.totalVehicles`, `activeJobs`, `completedReports`, `avgConfidence`, `hoursAnalyzed` | Computed | Target |
-| `DashboardKpis.*Delta` | Computed against the previous period; the period is **Open**, default previous 7 days | Open |
+| Existing `DashboardKpis.totalVehicles`; other KPIs | FD2 replaces the combined vehicle scalar with `countsByMethod[].total`; a legacy scalar adapter must select one method and retain its label. `activeJobs`, `completedReports`, `avgConfidence`, `hoursAnalyzed` keep their independent meanings | Decided count contract |
+| `DashboardKpis.*Delta` | Count comparisons must use the same method and filters in both periods; no mixed-method delta. Period remains open, default previous 7 days | FD2 restriction; period open |
 | `AiInsight.*` (`dashboard.ts:33-39`) | **No source.** No table stores insights; the blueprint lists none | Open |
 | `AiTimelineItem.*` | **No source.** Could derive from `job_events` | Open |
 | `RecentActivityItem.*` (`dashboard.ts:48-55`) | Computed from `audit_events` or `jobs` and `reports`; default: from jobs and reports | Open |
@@ -438,10 +470,13 @@ Who enforces each rule. "Database" means a constraint or trigger. "Service" mean
 | Notification panel | A person's newest, and the unread | `notifications (user_id, created_at DESC)` and a partial index on unread | Target |
 | Audit search | By organisation and time; by entity; by person | Three indexes on `audit_events` | Target |
 
-- **Target**: the Dashboard totals are sums over `count_buckets` joined to jobs. If they become slow, a summary table is added later; none is designed now (no performance numbers exist, O17).
+- **Decided (FD2)**: dashboard totals sum buckets from the latest completed job per upload, separately by method. Matching reports use identical job sets, filters and time interpretation. No mixed-method vehicle scalar. Performance caching remains open (O17).
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD21: protect sources used by queued/running jobs. Documentation only; runtime implementation pending. -->
 ## 8. Retention
 
 Retention is not decided (O10, needed before Sprint 6; NFR-8). The code reads nothing today.
@@ -450,18 +485,24 @@ Retention is not decided (O10, needed before Sprint 6; NFR-8). The code reads no
 |---|---|---|---|
 | Source video (file) | Sources storage; row stays with `source_deleted_at` | No default | Open, O10 |
 | Refused or half-written upload file | Sources storage | Deleted at once (REQ 4.52, 4.53) | Target |
-| Outputs: annotated video and frames, report files | Outputs storage; `deleted_at` on `job_artifacts` | No default | Open, O10 |
-| Results: `job_results`, `count_buckets` | Database | No default | Open, O10 |
+| Outputs: annotated video and frames | Outputs storage; delete object before setting `job_artifacts.deleted_at` | No default | Open period; FD7 ordering decided |
+| Report files | Outputs storage and `report_files` | Disabled pending deletion-marker/re-export policy | FD7 |
+| Results: `job_results`, `count_buckets` | Database | Automatic deletion disabled; controlled purge only | Decided, FD7 |
 | Job log lines: `job_events` | Database | No default | Open, O10 |
-| Audit events | Database | No default | Open, O10 |
+| Audit events | Database, append-only | Automatic deletion disabled | Decided, FD7 |
 | Notifications | Database | No default | Open, O10 |
 | Invites | Database | No default | Open, O10 |
 
-- **Target**: when a period is decided, it goes into `settings` and a scheduled job applies it. Deleting a source file must keep the upload row, because results and reports point to it.
+- **Decided (FD21)**: source retention locks the upload, skips any queued/running job, and holds the lock through object deletion and deletion-marker update. Queue, rerun and retry take that same upload lock before the job lock, check source_deleted_at and verify source existence. Missing/deleted sources yield 410; infrastructure failures yield 503. If deletion succeeded before a marker update crash, storage existence checks still prevent a new job. Preserve historical ready rows and results; see LOW_LEVEL_DESIGN FD21.
+
+- **Decided (FD7)**: only eligible approved retention categories run. Delete objects before marking rows, retry failed deletion with markers unset, and preserve relational evidence. Temporary cleanup must verify inactivity; age alone is insufficient.
 - **Open**: what happens to an organisation's data when it is deleted (AC-1). Owner: the user. Default in O73: a service-run purge in dependency order; no cascade does it. Audit rows stay (no foreign keys).
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD18: exercise deferred constraints, not rollback alone. Documentation only; runtime implementation pending. -->
 ## 9. Migration approach
 
 - **As built**: nothing has been created. No migration tool is used by the backend. The SQLite path is fixed in code (`database.py:4`).
@@ -470,8 +511,9 @@ Retention is not decided (O10, needed before Sprint 6; NFR-8). The code reads no
 - **Open**: moving Supabase data, if any exists. Owner: the user. Default: none to move; start with empty tables (O64).
 - **Open**: the sign-up trigger `handle_new_user`. Default: dropped, never applied (O65).
 - **Proposal**: migration order: 1) extensions none, 2) tables in the order of `schema.sql`, 3) triggers, 4) optional settings seed, 5) role grants once roles exist.
-- **Proposal**: SQLAlchemy models are written to match this file. Under the O72 default (PostgreSQL locally too) no SQLite twins are needed. If the user keeps SQLite locally, this file cannot run there and a separate SQLite schema would have to be written.
+- **Target (O72 decided, SCOPE section 9)**: SQLAlchemy models must match PostgreSQL locally and in production. No SQLite substitute is planned for this schema; runtime migration remains pending.
 - **Target**: `schema.sql` is for a fresh, empty database, one transaction, no `IF NOT EXISTS` on purpose. The migration tool (O63) takes over after the first run.
+- **Decided (FD18)**: tests of deferred completion constraints must force `SET CONSTRAINTS ALL IMMEDIATE` after the whole intended transaction, or commit isolated test transactions; rollback alone never proves a deferred guard. Test valid result-plus-completion and invalid completion-without-result paths.
 - **Target**: migrations and constraints are tested once a real database exists (REQ 6.14). Test: run `schema.sql` on an empty PostgreSQL 16, then try each forbidden action in section 6 and expect it to be refused. Extra test cases: ownership transfer demote-then-promote works, and promote-first or one swapping UPDATE fails; moving a zone or line to an unlocked configuration (and a point to a zone of one) is refused; a purge without `SET LOCAL jr.purge = 'on'` fails on the first locked configuration and with it succeeds; a job set `completed` without `progress_percent = 100` or `finished_at` is refused.
 - **Target**: the old unused `Project` model (`models.py:7-36`) is replaced; it has an integer id and fields (`media_path`, `roi_completed`) that do not match this design. Removal needs the user's word (O54 covers the related file).
 
@@ -516,7 +558,7 @@ New in this file (O57 to O76). Owner for all: the user. A default is used until 
 | O69 | Invite lifetime | 7 days |
 | O70 | Job stage names | `queued`, `loading_video`, `reading_frames`, `detecting`, `tracking`, `counting`, `aggregating`, `annotating`, `finishing` |
 | O71 | Database role names for the API and worker, and their grants | `jr_app`, `jr_worker`; insert and select only on `audit_events`; the app never connects as the table owner |
-| O72 | Local development database. SCOPE section 9 and O2 say SQLite; this schema cannot run on SQLite (section 6). SCOPE now records the user's confirmation | PostgreSQL locally as well (a local install or a container). SQLite is not used for this schema. **Decided 2026-11-07 (SCOPE section 9)** |
+| O72 | Local development database. PostgreSQL locally is approved in SCOPE section 9; SQLite cannot run this schema | PostgreSQL locally as well (a local install or a container). SQLite is not used for this schema. **Decided 2026-11-07 (SCOPE section 9)** |
 | O73 | "Delete organisation" (AC-1): procedure, since foreign keys are RESTRICT and projects are archived, never hard-deleted | A service-run purge, owner-only, after an explicit confirmation, in dependency order: `count_buckets`, `job_results`, `job_artifacts` (and their files), `report_files`, `reports`, `job_attempts`/`job_events`, `jobs`, `analysis_configurations` (zones, points and lines cascade), `uploads` (and files), `projects`, then members, invites, notifications, the organisation. One audit row is written first; audit rows stay. The purge runs in one transaction that starts with `SET LOCAL jr.purge = 'on'` (needed for the lock triggers, O76). Example in `schema.sql` 9.7: `rerun_of_job_id` is set to null before jobs are deleted, and configurations are deleted leaf first (those no other configuration is based on), repeating until none remain |
 | O74 | When expired invites are revoked (the open-invite index cannot test `expires_at`) | Service sets `revoked_at` on the next invite to the same email, plus a daily job |
 | O75 | Screen default recording time `24:00` (the database refuses `24:00:00`) | Change the default to `23:59`; the service refuses `24:00` with a clear message |

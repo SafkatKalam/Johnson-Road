@@ -6,7 +6,7 @@
 -- v0.2 change: review fixes (delete rules now RESTRICT, job insert and result
 --   triggers, audit truncate and grants block, recording times below 24:00,
 --   composite keys for job events, notifications and cross-links, BEGIN/COMMIT).
--- STATUS: this SQL was NOT executed and NOT validated. It was only written.
+-- STATUS: static consistency checks performed; NOT executed or validated against PostgreSQL.
 -- FOR A FRESH, EMPTY DATABASE ONLY. There is no IF NOT EXISTS on purpose: running
 --   it twice must fail loudly. The whole file is one transaction (BEGIN ... COMMIT),
 --   so any error leaves nothing behind. Later changes need a migration tool (O63).
@@ -14,7 +14,7 @@
 -- suggestion, needs approval. [Open] = the user has not decided (default given).
 -- Decision in force: option B (O48). This database is the record; Supabase only
 -- signs people in (its id is stored as auth_subject). No password is stored.
--- POSTGRES-ONLY parts (SQLite will not run these; local database is O72, default
+-- POSTGRES-ONLY parts (SQLite will not run these; local database is O72, decided
 -- PostgreSQL, so SQLite is not used for this file):
 --   P1 DEFAULT gen_random_uuid()   P2 timestamptz and now()   P3 jsonb
 --   P4 GENERATED ... AS IDENTITY   P5 UNIQUE NULLS NOT DISTINCT (PostgreSQL 15+)
@@ -132,14 +132,16 @@ CREATE TABLE uploads (
   frame_rate           numeric(8,3) CHECK (frame_rate > 0),
   frame_count          bigint CHECK (frame_count >= 0),
   preview_frame_key    text,                    -- one real frame for the drawing boards (REQ 2.45); also the project thumbnail
-  camera_id            text, road_name text,    -- wizard metadata, all optional (O19 default: typed values for date and times, text for the rest)
+  camera_id            text, road_name text,    -- wizard metadata, all optional (O19/FD4 decided: typed date/time values, text for the rest)
   recorded_date        date,
   -- [Open] O68: local clock at the camera, no time zone. PostgreSQL accepts '24:00:00' as a time,
   -- so each is checked to be before 24:00. The screen default "24:00" must change to 23:59 or be refused (O75).
   recorded_start_time  time CHECK (recorded_start_time < TIME '24:00:00'),
   recorded_end_time    time CHECK (recorded_end_time < TIME '24:00:00'),
   weather              text, notes text,
-  source_deleted_at    timestamptz,             -- file removed by retention; the row stays because results point to it
+-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+-- Changed by: Codex. FD21: retention/queue/retry share an upload lock; check active jobs and object existence.
+  source_deleted_at    timestamptz,             -- deleted source; historical row remains, new processing refused
   created_at           timestamptz NOT NULL DEFAULT now(),   -- upload time
   updated_at           timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (project_id, organization_id) REFERENCES projects (id, organization_id) ON DELETE RESTRICT,
@@ -170,7 +172,12 @@ CREATE TABLE analysis_configurations (
   iou_threshold         numeric(4,3) NOT NULL CHECK (iou_threshold > 0 AND iou_threshold <= 1),
   frame_skip            integer NOT NULL DEFAULT 1 CHECK (frame_skip >= 1),
   batch_size            integer NOT NULL DEFAULT 1 CHECK (batch_size >= 1),
-  classes               jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(classes) = 'array'),   -- P3: short list of class names; empty = server default
+-- Adrishikhar - 7 November 2026, 17:45 (Asia/Dhaka) · Fix approved
+-- Changed by: Codex. Fix FD11: persist resolved nonempty classes, never a server-default sentinel.
+-- Service validates string elements and model support. PostgreSQL execution remains unverified.
+  classes               jsonb NOT NULL CHECK (
+    CASE WHEN jsonb_typeof(classes) = 'array' THEN jsonb_array_length(classes) > 0 ELSE false END
+  ), -- P3: explicit class list; no default; service resolves omitted/empty request values before insert
   bucket_seconds        integer NOT NULL DEFAULT 900 CHECK (bucket_seconds > 0),   -- [Open] O34: 15 minutes
   generate_report       boolean NOT NULL DEFAULT true,    -- [Open] O22
   annotated_output      boolean NOT NULL DEFAULT true,    -- [Open] O36
@@ -202,7 +209,7 @@ CREATE TABLE zone_points (   -- at least 3 points per zone is a service rule
 );
 
 -- A counting line: two points and a direction (REQ 2.27). Coordinates 0 to 1.
--- forward = crossing from the left of the arrow point 1 -> point 2 to its right. [Open] O66: exact wording.
+-- forward = crossing from the left of the arrow point 1 -> point 2 to its right. O66 decided, SCOPE section 9.
 CREATE TABLE counting_lines (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   configuration_id uuid NOT NULL REFERENCES analysis_configurations(id) ON DELETE CASCADE,
@@ -239,9 +246,12 @@ CREATE TABLE jobs (
   error_code          text,                      -- short code, e.g. unreadable_video, model_missing, out_of_memory
   safe_message        text,                      -- plain words for the user; never a stack trace or path
   diagnostic_id       text,                      -- the number support uses to find the raw error in the server log
-  cancel_requested_at timestamptz,               -- the worker checks this between batches
+  cancel_requested_at timestamptz,               -- FD5: supervisor polls independently of engine batches
   cancel_requested_by uuid REFERENCES users(id) ON DELETE SET NULL,
-  worker_id           text,
+-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+-- Changed by: Codex. Fix: FD4/FD5: immutable job context and attempt ownership. PostgreSQL execution validation pending.
+  metadata_snapshot   jsonb NOT NULL CHECK (jsonb_typeof(metadata_snapshot) = 'object'),
+  worker_id           text, -- unique per process start; check attempt ownership on every worker write
   device              text,                      -- cpu or the GPU used
   model_name          text,                      -- filled when the job starts running
   model_file_name     text,
@@ -265,6 +275,9 @@ CREATE TABLE jobs (
   CHECK (status <> 'failed' OR (error_code IS NOT NULL AND safe_message IS NOT NULL AND diagnostic_id IS NOT NULL)),   -- R5
   CHECK (status NOT IN ('completed','failed','cancelled') OR finished_at IS NOT NULL),
   CHECK (status NOT IN ('running','completed') OR started_at IS NOT NULL),
+-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+-- Changed by: Codex. FD13: on estimate overrun, set frames_total NULL atomically with progress.
+-- Completion sets both counters to observed frames. Keep this bound; runtime tests pending.
   CHECK (frames_total IS NULL OR frames_done <= frames_total),
   CHECK (status <> 'completed' OR progress_percent = 100)
 );
@@ -274,7 +287,7 @@ CREATE INDEX jobs_running_ix ON jobs (last_heartbeat_at) WHERE status = 'running
 CREATE INDEX jobs_org_status_ix ON jobs (organization_id, status, queued_at DESC);      -- Job Queue tabs
 CREATE INDEX jobs_project_ix ON jobs (project_id, created_at DESC);
 
--- Every attempt of a job is kept, including failed and cancelled ones. [Open] O57.
+-- Every attempt of a job is kept, including failed and cancelled ones. O57 decided, SCOPE section 9.
 CREATE TABLE job_attempts (
   job_id         uuid NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,   -- pure child row of one job
   attempt_no     integer NOT NULL CHECK (attempt_no >= 1),
@@ -311,7 +324,9 @@ CREATE TABLE job_results (
   model_name         text NOT NULL,
   model_file_sha256  text NOT NULL,
   code_version       text NOT NULL,
-  method             text NOT NULL DEFAULT 'line_crossing',   -- how counts were made (R2)
+-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+-- Changed by: Codex. Fix: FD1: support both counting modes. PostgreSQL execution validation pending.
+  method             text NOT NULL CHECK (method IN ('line_crossing','zone_presence')),
   is_estimate        boolean NOT NULL DEFAULT true,           -- counts are estimates (R2)
   bucket_seconds     integer NOT NULL CHECK (bucket_seconds > 0),
   time_base          text NOT NULL DEFAULT 'video_start' CHECK (time_base IN ('video_start','recorded_clock')),   -- O34
@@ -336,7 +351,9 @@ CREATE TABLE count_buckets (
   bucket_index       integer NOT NULL CHECK (bucket_index >= 0),
   bucket_start_s     numeric(12,3) NOT NULL CHECK (bucket_start_s >= 0),   -- seconds from video start
   vehicle_class      text NOT NULL,
-  direction          text NOT NULL CHECK (direction IN ('forward','backward')),
+-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+-- Changed by: Codex. Fix: FD1: zone presence has no crossing direction. PostgreSQL execution validation pending.
+  direction          text NOT NULL CHECK (direction IN ('forward','backward','not_applicable')),
   line_id            uuid,
   zone_id            uuid,
   vehicle_count      integer NOT NULL CHECK (vehicle_count >= 0),
@@ -344,7 +361,8 @@ CREATE TABLE count_buckets (
   FOREIGN KEY (result_id, job_id, upload_id, configuration_id) REFERENCES job_results (id, job_id, upload_id, configuration_id) ON DELETE CASCADE,   -- pure child row of one result
   FOREIGN KEY (line_id, configuration_id) REFERENCES counting_lines (id, configuration_id) ON DELETE RESTRICT,   -- line must belong to this configuration (skipped when line_id is null)
   FOREIGN KEY (zone_id, configuration_id) REFERENCES counting_zones (id, configuration_id) ON DELETE RESTRICT,
-  CHECK (line_id IS NOT NULL OR zone_id IS NOT NULL),   -- [Open] O42 default: at least one line or one zone
+  CHECK ((line_id IS NOT NULL AND direction IN ('forward','backward'))
+      OR (line_id IS NULL AND zone_id IS NOT NULL AND direction = 'not_applicable')), -- FD1; service checks result method/configuration
   UNIQUE NULLS NOT DISTINCT (result_id, bucket_index, vehicle_class, direction, line_id, zone_id)   -- P5
 );
 CREATE INDEX count_buckets_result_ix ON count_buckets (result_id, bucket_index);
@@ -378,7 +396,11 @@ CREATE TABLE reports (
   title            text NOT NULL,
   report_type      text NOT NULL DEFAULT 'summary' CHECK (report_type IN ('summary','daily','weekly','peak')),
   options          jsonb NOT NULL DEFAULT '{}',   -- P3: filters used (period, classes, directions, zone); small, read whole
-  options_hash     text NOT NULL,                 -- sha256 of options, so "same report" can be found
+-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+-- Changed by: Codex. Fix: FD2/FD4: retain report count method and immutable metadata. PostgreSQL execution validation pending.
+  method           text NOT NULL CHECK (method IN ('line_crossing','zone_presence')),
+  metadata_snapshot jsonb NOT NULL CHECK (jsonb_typeof(metadata_snapshot) = 'object'),
+  options_hash     text NOT NULL, -- sha256 of options
   version          integer NOT NULL DEFAULT 1 CHECK (version >= 1),
   vehicles_counted bigint NOT NULL DEFAULT 0,     -- copy at creation, so the list needs no join
   generated_by     uuid REFERENCES users(id) ON DELETE SET NULL,
@@ -443,6 +465,8 @@ CREATE INDEX audit_org_time_ix ON audit_events (organization_id, occurred_at DES
 CREATE INDEX audit_entity_ix ON audit_events (entity_type, entity_id);
 CREATE INDEX audit_actor_ix ON audit_events (actor_user_id, occurred_at DESC);
 
+-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+-- Changed by: Codex. Fix: FD7: reject non-null automatic audit/result retention settings in service. PostgreSQL execution validation pending.
 -- Server-wide limits and retention periods. value null = not decided yet. [Proposal] global only.
 CREATE TABLE settings (
   key         text PRIMARY KEY,

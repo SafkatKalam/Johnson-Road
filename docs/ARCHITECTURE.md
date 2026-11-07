@@ -1,10 +1,16 @@
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD16/FD17/FD20/FD21: align API status, report regeneration, trace IDs and source retention. Documentation only; runtime implementation pending. -->
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: reconcile database decisions, counting contracts and flow rules. Documentation only; runtime pending. -->
 # Johnson Road — Architecture
 
 Version: 0.2 · Date: 2026-11-07 · Status: **draft, awaiting approval**
 
-0.2 corrects errors found by an independent recheck. Every API path, call path and request order in this document is a **Proposal**: REQUIREMENTS 4B names no paths.
+0.2 corrects errors found by an independent recheck. API paths and call orders remain proposals except where an approved FD decision defines the contract; LOW_LEVEL_DESIGN is the detailed contract reference.
 
-How the parts of Johnson Road fit together: what each part does, what talks to what, where the rules sit. Builds on `docs/SCOPE.md` (v0.4, approved) and `docs/REQUIREMENTS.md` (v0.3) and reuses their IDs. Nothing was run; code was only read. The `ARCHITECTURE.md` in the project root is the user's own layer diagram and is not replaced.
+How the parts of Johnson Road fit together: what each part does, what talks to what, where the rules sit. Builds on `docs/SCOPE.md` (v0.4, approved) and `docs/REQUIREMENTS.md` (v0.3) and reuses their IDs. Runtime descriptions are source observations. Static documentation checks and counting-rule simulations have run; backend and PostgreSQL execution remain unverified. The `ARCHITECTURE.md` in the project root is the user's own layer diagram and is not replaced.
 
 ## Tag key
 
@@ -21,7 +27,7 @@ One tag per line or table row.
 |---|---|---|
 | Sign-in | Supabase sign-in; backend checks Supabase tokens | O1 |
 | Where projects, jobs, reports live | **B, decided by the user on 2026-11-07 (SCOPE section 9)**: backend PostgreSQL is the record; Supabase for sign-in only | O48 |
-| Production database | PostgreSQL; SQLite for local | O2 |
+| Production database | PostgreSQL locally and in production (O72 approved; hosting remains open) | O2 |
 | Production file storage | S3-compatible behind a storage interface; local folder in development | O3 |
 | Queue | FastAPI background task until Sprint 3; then a separate worker process with a jobs table | O4 |
 | Job status word | `running` | O7 |
@@ -102,7 +108,7 @@ flowchart TB
 | Frontend | Screens, drawing boards, polling | React, TypeScript, Tailwind, React Router, axios, framer-motion | Sample data, fake login (`lib/auth.tsx:63-111`), no backend call | Services call the API; real session |
 | API | Sign-in check, rights, validation, data, job creation | FastAPI, Pydantic, SQLAlchemy | Runs; sample data except upload; no sign-in check (`main.py`) | Real routes, token check, database, storage interface |
 | Worker | Run one job at a time through the engine, write progress | Python, same code base | None; a background task in the API process does it (`upload_service.py:152-153`) | Separate process (Sprint 3, O4) |
-| Database | The record | SQLAlchemy; SQLite path fixed (`database.py:4`) | One `Project` model, never created or read (`models.py:7-36`) | PostgreSQL; SQLite locally (O2) |
+| Database | The record | SQLAlchemy; SQLite path fixed (`database.py:4`) | One `Project` model, never created or read (`models.py:7-36`) | PostgreSQL locally and in production (O72; hosting open) |
 | File storage | Source videos; separately, generated output | Local `uploads/` (`upload_service.py:12`) | Local folder, no checks | S3-compatible behind an interface (O3) |
 | Supabase auth | Accounts, passwords, verification and reset emails, tokens | `@supabase/supabase-js` (`lib/supabase.ts`) | Called from 5 pages; whether a project is running is unknown | Sign-in only under B |
 | AI engine | Read video, detect, track, count | Python, Ultralytics YOLO, PyTorch (`yolo_detector.py:9-10`) | Inside the API process; detection real, rest placeholder | Inside the worker |
@@ -190,7 +196,7 @@ routers -> services -> repositories -> database
 - **As built**: zones and lines stay in component state (`DetectionZoneCanvas.tsx:17`, `CountLineCanvas.tsx:24`); nothing reaches the backend (AN-1, AN-2).
 - **Target**: points are saved with the configuration as positions between 0 and 1 of the real frame (REQ 2.26, 2.27).
 - **Target**: the zone drops detections outside it before tracking; lines are used only by the counter, after tracking.
-- **Open**: is a zone required; is a line required to queue a job. Owner: the user. Default: at least one line or one zone; with no zone the whole frame is used (O28, O42).
+- **Decided (O42)**: at least one line or zone is required. FD1 in LOW_LEVEL_DESIGN section 18 defines line-crossing and zone-presence modes; geometry details O28/O79 remain separate.
 
 ### 5.4 How a job calls the engine
 
@@ -205,7 +211,7 @@ routers -> services -> repositories -> database
 
 ### 5.6 Model files (F2, F3)
 
-- **As built**: `yolov8n.pt` and `yolo11n.pt` are in `backend/` (file search). `.gitignore` has no `.pt` pattern. Whether git tracks them: **Open/unverified**. Known: `.gitignore` (29 lines) has no `.pt` rule; a text search of `.git` found no match for either file name, which hints they are untracked, but the index is binary and packed, so it cannot be settled without running git.
+- **Verified 2026-11-07**: `git ls-files backend/yolov8n.pt backend/yolo11n.pt` lists both model files; both are tracked. Tracking does not prove model compatibility or runtime loading.
 - **As built**: default `MODEL_PATH=yolov8n.pt` is relative (`ai/settings.py:8`), so it works only when the server starts in `backend/`. The fallback looks in the repository root (`runtime.py:89`, `yolo_detector.py:68`), where no weights exist (F2).
 - **Target**: model location is one setting (absolute path or storage location); weights stay out of git; each job records the model file identity (REQ 5.25, 5.28).
 - **Open**: where weights live in production. Owner: the user. Default: a models folder set by a setting, filled at deploy, outside git (O49).
@@ -237,7 +243,10 @@ stateDiagram-v2
 - **Target**: this is SCOPE section 4 and REQUIREMENTS 3.32; the moves stay Open until approved (O9).
 - **Target**: the API creates the job row as `queued`. The worker takes the oldest `queued` row and sets `running` in one database step, so two workers cannot take one job.
 - **Target**: the worker writes stage, frames done out of total and time to the job row after each batch; the API only reads it (REQ 5.17).
-- **Target**: cancel sets a "cancel requested" mark; the worker checks it between batches, stops, sets `cancelled`. If it cannot stop safely, the button stays disabled (REQ 3.35, 5.18).
+<!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: FD5: align cancellation with independent supervision. Documentation correction; runtime implementation pending. -->
+- **Decided (FD5)**: cancellation records a request; a supervisor checks it independently of frame batches, download, model loading and output storage. Try cooperative stopping first, then terminate that attempt's isolated analysis process after configured grace. Mark cancelled only after stopping; completion/recovery must recheck attempt ownership and cancellation under the job lock. Timing values remain open (O46/O81).
 - **Target**: a job past its timeout becomes `failed` with a safe message (REQ 3.44); on start, the worker sets jobs left `running` by a dead worker to `failed`, retryable (default for O40).
 - **Target**: the database refuses moves outside the table; `completed` is written only with stored results (REQ 3.33).
 - **Target**: Sprint 2 keeps the background task but builds the job row and state rules in the API, so Sprint 3 only moves the runner.
@@ -254,7 +263,7 @@ stateDiagram-v2
 
 ## 7. Key flows (Target)
 
-Each flow names the API call and the data. Data names are the entities from `blueprint.md` section 7; real tables are in DATA_MODEL. **Proposal**: every path below is invented here; REQUIREMENTS 4B names no paths. The new job path `GET /api/jobs/{id}` would replace the existing `GET /api/processing/jobs/{job_id}` (`backend/app/routers/processing.py:17`). Also, `POST /api/uploads` today also creates the job (`routers/uploads.py:26-28`, REQUIREMENTS 4.6); under the target it would become upload only. That changes an existing route (AI_RULES "never break existing routes"): **Open** for the user, default: keep the old route working until the frontend is moved (O56). Call paths are proposals.
+Each flow names the API call and the data. Data names are the entities from `blueprint.md` section 7; real tables are in DATA_MODEL. Paths below were initially proposals; approved FD contracts in LOW_LEVEL_DESIGN override them. The new job path `GET /api/jobs/{id}` would replace the existing `GET /api/processing/jobs/{job_id}` (`backend/app/routers/processing.py:17`). Also, `POST /api/uploads` today also creates the job (`routers/uploads.py:26-28`, REQUIREMENTS 4.6); under the target it would become upload only. That changes an existing route (AI_RULES "never break existing routes"): **Open** for the user, default: keep the old route working until the frontend is moved (O56). Call paths remain proposals except individually approved FD contracts.
 
 ### 7.1 Sign in
 
@@ -337,7 +346,7 @@ sequenceDiagram
     API-->>FE: file with creation time and analysis version
 ```
 
-- **Proposal**: `POST /api/reports`, `GET /api/reports/{id}/export` (paths invented; REQ 4.21 names no paths); reads job results, writes Report. The same request twice gives one report (REQ 3.22).
+- **Decided (FD17)**: normal report creation returns version 1 idempotently. `POST /api/reports/{id}/regenerate` creates or returns the next version for that source report; the server assigns it under the job lock. See LOW_LEVEL_DESIGN section 10. Export behavior remains as described there.
 - **Open**: Excel and share link. Owner: the user. Default: CSV and PDF only (O31).
 
 ---
@@ -351,7 +360,7 @@ Entities only; tables and columns are in DATA_MODEL.
 - **Target**: sources and outputs live in separate places so the app can read sources and the worker write outputs only (NFR-4, AC-17).
 - **Target**: files are reached only through a storage interface (save, open, delete, short-lived link) with a local-folder version for development and tests and an S3-compatible version for production (O3).
 - **As built**: the only stored thing is the upload in `uploads/` (git-ignored, `.gitignore:13`), named `<12 hex>_<client name>` (`upload_service.py:29-30`); `*.db` is ignored (`.gitignore:10`).
-- **Open**: retention of source media, result media and audit records. Owner: the user. No default (O10). Needed before Sprint 6.
+- **Decided (FD7)**: automatic audit/result retention is disabled. Source/evidence retention periods remain open (O10); delete eligible objects before setting deletion markers. FD21 serializes source deletion with queue/rerun/retry using the upload lock, skips queued/running jobs, and rejects absent/deleted sources before queueing. Report-file retention awaits its own policy.
 
 ---
 
@@ -412,7 +421,7 @@ Entities only; tables and columns are in DATA_MODEL.
 
 | Environment | Purpose | Database | Files | Queue | Sign-in |
 |---|---|---|---|---|---|
-| Local | One developer, tests | SQLite | Local folder | Background task, later the worker run by hand | Test Supabase project, or a test token in test code only |
+| Local | One developer, tests | PostgreSQL (O72 decided) | Local folder | Background task, later the worker run by hand | Test Supabase project, or a test token in test code only |
 | Staging | Copy of production for acceptance | Separate PostgreSQL | Separate bucket | Worker | Separate Supabase project |
 | Production | Real users | Managed PostgreSQL | Object storage, encrypted | Worker, sized by measurement | Production Supabase project |
 
@@ -451,13 +460,13 @@ Entities only; tables and columns are in DATA_MODEL.
 
 | What | How | REQUIREMENTS |
 |---|---|---|
-| Correlation id | One id per request, carried to job and worker lines; the job id is that id | NFR-11 |
+| Correlation identifiers | request_id identifies one HTTP attempt; job_id links the durable job and attempt_no identifies a worker run. Worker logs retain the creation request ID; unrelated HTTP requests have no job ID | NFR-11, FD20 |
 | Structured logs | Fixed shape; secrets and personal data removed | NFR-7, NFR-11 |
 | Metrics | Route time and errors; upload outcomes; queue size, job time, retries, cancellations, frames per second | NFR-16 |
 | Per-job record, health | Model, configuration version, device, code version on the job row; `/health` for API and worker | 5.25, 4.24, 5.26 |
 | Alerts and runbooks | Queue growth, repeated worker failures, full storage, rising API errors; written backup, restore, rollback, incident steps | NFR-17 |
 
-- **As built**: `log_inference` (`ai/runtime.py:113`) is defined and never called. The only live log calls are `logger.info("ai.job", extra=...)` and `logger.error` in `upload_service.py:112-125,136-149`. There is no `logging.basicConfig`, `dictConfig` or `Formatter` anywhere in `backend/app` (only three `getLogger` calls), so the `extra=` fields cannot print, and the info line is probably not emitted at all unless the server's own logging applies. REQUIREMENTS NFR-11 (job id in every log line) is therefore not met today. `timing` keeps only the latest values in a dict that nothing exports (`runtime.py:129-131`).
+- **As built**: `log_inference` (`ai/runtime.py:113`) is defined and never called. The only live log calls are `logger.info("ai.job", extra=...)` and `logger.error` in `upload_service.py:112-125,136-149`. There is no `logging.basicConfig`, `dictConfig` or `Formatter` anywhere in `backend/app` (only three `getLogger` calls), so the `extra=` fields cannot print, and the info line is probably not emitted at all unless the server's own logging applies. REQUIREMENTS NFR-11 (request IDs and job/attempt links where applicable) is therefore not met today. `timing` keeps only the latest values in a dict that nothing exports (`runtime.py:129-131`).
 - **Open**: performance numbers. Default: none, measure first (O17).
 
 ---
@@ -562,3 +571,8 @@ New in this file (defaults, not decisions):
 | 12 Security | NFR-1 to NFR-9, NFR-18, 4.32 to 4.43 | GAP-16, D3, D4 |
 | 13 Observability, 14 Technology | NFR-11, NFR-16, NFR-17, 4.24, 5.26, 6.16, 6.20, 6.22 | PR-11, GAP-17, O1 to O3, O14, O20 |
 | 15 Option A and B | 1.34, 1.35, 4.31 | O12, O48, F9 to F14 |
+
+
+### Approved flow correction reference — 2026-11-07
+
+[LOW_LEVEL_DESIGN section 18](LOW_LEVEL_DESIGN.md#18-approved-backend-flow-corrections) records FD1–FD8: counting modes and totals, generated storage keys, metadata locking and snapshots, independent worker supervision with attempt checks, transactional notifications, retention restrictions, and one video per workflow. Adrishikhar Barua approved these documentation corrections; Codex edited them. Runtime implementation remains pending. Dated approved decisions override earlier blueprint statements and draft defaults; unrelated open items remain open.

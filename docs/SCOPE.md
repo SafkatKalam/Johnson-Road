@@ -1,3 +1,6 @@
+<!-- Adrishikhar - 7 November 2026, 17:32 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: reconcile database decisions, counting contracts and flow rules. Documentation only; runtime pending. -->
 # Johnson Road — Scope
 
 Version: 0.4 · Date: 2026-11-07 · Status: **approved by the user, 2026-11-07** (open items in section 10 stay open until answered; their defaults are used meanwhile) · 0.2 adds section 8a (five known defects with root cause and planned fix) · 0.3 corrects errors found by an independent recheck and adds section 8b · 0.4 adds the Supabase table definitions found in `frontend/supabase/migrations/` (section 8b, F9 to F14) and removes every claim that they are not visible
@@ -8,7 +11,7 @@ How to read this file. Every statement is tagged:
 - **Target**: a plan or decision from `blueprint.md`. Not built yet.
 - **Open**: the user has not decided. Listed in section 10 with a default.
 
-Source of truth for intent: `blueprint.md`, `AI_RULES.md`, `ARCHITECTURE.md`, `ROADMAP.md`. This file does not change them. It records where the code stands against them.
+Source of truth for intent: dated approved decisions override earlier blueprint statements and draft defaults. Read section 9 and LOW_LEVEL_DESIGN section 18 first when a conflict exists; then use `blueprint.md`, `AI_RULES.md`, `ARCHITECTURE.md` and `ROADMAP.md` for unaffected intent. Current-code observations describe implementation, not approval.
 
 ---
 
@@ -18,7 +21,7 @@ Johnson Road turns road video into traffic counts. A user uploads a road video, 
 
 - Users: traffic analysts, road project managers, municipal decision-makers, and an organisation administrator (`blueprint.md` §3).
 - Parts: React web app, FastAPI backend, a Python computer-vision pipeline (YOLO detector, tracker, counter). (Target)
-- Local development database: PostgreSQL (decision O72, section 9; today the code still points at a SQLite file, `database.py:4`). Production database and file storage not yet chosen (see section 10). A Postgres schema for Supabase already exists in the repo (section 8b, F9); whether it or a backend database is the record is open item O48 in `REQUIREMENTS.md`.
+- Local development database: PostgreSQL (decision O72, section 9; today the code still points at a SQLite file, `database.py:4`). Backend PostgreSQL is the approved data store; production hosting and file storage remain open. A Postgres schema for Supabase already exists in the repo (section 8b, F9); O48 is decided: backend PostgreSQL is the record; Supabase supplies sign-in.
 - Pipeline in one line: upload, create job, detect, track, count, report. (Target)
 
 **As built, in one paragraph.** The web app has all screens, but every data service returns hard-coded sample data. The backend serves sample data too. One real thing exists: uploading a file saves it to disk and starts a background job that calls the YOLO detector. The result is not trustworthy yet (section 8).
@@ -29,7 +32,7 @@ Johnson Road turns road video into traffic counts. A user uploads a road video, 
 
 | # | Rule | Status | Evidence / note |
 |---|---|---|---|
-| R1 | A "count" is the number of distinct vehicles that cross a configured counting line, by class, direction and time interval | Target | `blueprint.md` §6 "Computer vision and analytics" |
+| R1 | Count each track once per allowed line, or once per zone in zone-only mode. Totals are method-labelled event sums, not globally unique vehicles | Decided, FD1–FD2 | LOW_LEVEL_DESIGN section 18 |
 | R1a | Current count is the number of detections returned by the tracker, with no line crossing | As built | `ai/counter.py:6` returns `len(tracks)`; `ai/trackers/bytetrack_tracker.py:13-27` makes one track per detection |
 | R2 | Counts are presented as estimates with confidence and method | Target | `blueprint.md` §11 |
 | R3 | Supported uploads: video files with checks on type (by content), size and duration | Target | `blueprint.md` §6 Uploads, §11 |
@@ -264,6 +267,9 @@ Also found, not in the blueprint: frontend `src/data/` (5 files) is not imported
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:54 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: O48: correct the D5 repair instruction to use backend-owned profile and organisation data. Documentation only; runtime implementation pending. -->
 ## 8a. Known defects and planned fixes
 
 Five defects found by reading the code. Nothing was run, and **no code has been changed**: this section only records them. Each entry has the root cause (re-checked by reading the files named), the planned fix (**Target**) and when it should happen. The fixes need approval (open item O13) before anyone touches code.
@@ -274,7 +280,7 @@ Five defects found by reading the code. Nothing was run, and **no code has been 
 | D2 | A clean install cannot start | `requirements.txt` has no `ultralytics` and no `torch`. `main.py:4` imports `ai/runtime.py`, which imports `yolo_detector.py` (`runtime.py:7`), which imports both at load (`yolo_detector.py:9-10`). The import fails at startup, before any request | Add `ultralytics` and `torch` to `requirements.txt` with pinned versions that work with the project's Python (the existing `.venv` is Python 3.9). Choice of versions and CPU or GPU build is an open decision (O14). Record how to install | Before any real-video test. Second fix |
 | D3 | Upload limits are not enforced | `MAX_VIDEO_SIZE` and `MAX_VIDEO_LENGTH` are defined (`ai/settings.py:14-15`) and no other file reads them (searched). `FRAME_SKIP` is passed to the detector and stored (`yolo_detector.py:44`) but never used when predicting. `upload_service.py:32` reads the whole file into memory with no size check. The 20 GB default is unrealistic for that code | Check size while writing the file and refuse with a clear message; check duration and type by content after saving, and delete the file if refused; apply `FRAME_SKIP` in the frame reader. Values and the unit of `MAX_VIDEO_LENGTH` are open (O8) | Sprint 2 (upload validation, `blueprint.md` §6) |
 | D4 | Client file name goes into the saved path | `upload_service.py:30` builds `UPLOAD_DIR / f"{upload_id}_{file.filename}"`. `filename` comes from the browser. A name containing path separators changes where the file is written (by reading; not run). The name is also copied into the job's `projectName` (`upload_service.py:45`) | Never use the client's name for the path. Save as `<id>.<extension>` with the extension taken from an allowed list. Keep the original name only as display text, shortened and cleaned | Sprint 2. Treat as a security fix: do it before the upload route is reachable by anyone else |
-| D5 | Profile and Organization screens use a user that does not exist in Supabase | `AuthProvider.loadUser` sets a fixed user id `"1"`, a fixed profile and organisation id `"org-1"` (`lib/auth.tsx:73-91`). `MyProfilePage.tsx:64` runs `supabase.from('profiles').update(...).eq('id', user?.id)` and `OrganizationPage.tsx:53-57,76-83,101` read and write by `organization.id`. The ids `"1"` and `"org-1"` are not valid uuids, and the columns they are compared with are uuids (`frontend/supabase/migrations/20260729043122_create_all_tables.sql`: `profiles.id`, `organizations.id`), so these queries should fail with an invalid-id error (by reading; not run; section 8b F10). The member invite insert fails the same way. The save on the profile page ignores the result and shows "Saved" anyway (`MyProfilePage.tsx:64-68`). The password form never uses the "current password" field and calls `supabase.auth.updateUser` (`:86`) with no real Supabase session, so it should fail with an error | Only fixable together with real login (GAP-2): sign in through Supabase, load the real user, profile and organisation from it, show an error when a save fails. Until then these two screens must be treated as sample screens | Sprint 1 (auth). Depends on O1 |
+| D5 | Profile and Organization screens use a user that does not exist in Supabase | `AuthProvider.loadUser` sets a fixed user id `"1"`, a fixed profile and organisation id `"org-1"` (`lib/auth.tsx:73-91`). `MyProfilePage.tsx:64` runs `supabase.from('profiles').update(...).eq('id', user?.id)` and `OrganizationPage.tsx:53-57,76-83,101` read and write by `organization.id`. The ids `"1"` and `"org-1"` are not valid uuids, and the columns they are compared with are uuids (`frontend/supabase/migrations/20260729043122_create_all_tables.sql`: `profiles.id`, `organizations.id`), so these queries should fail with an invalid-id error (by reading; not run; section 8b F10). The member invite insert fails the same way. The save on the profile page ignores the result and shows "Saved" anyway (`MyProfilePage.tsx:64-68`). The password form never uses the "current password" field and calls `supabase.auth.updateUser` (`:86`) with no real Supabase session, so it should fail with an error | Only fixable together with real login (GAP-2): sign in through Supabase, resolve the real identity through Supabase sign-in and load the application user, profile and organisation through the backend PostgreSQL API (O48), show an error when a save fails. Until then these two screens must be treated as sample screens | Sprint 1 (auth). Depends on O1 |
 
 Order inside the fixes: D1 and D2 first (nothing real can run without them), then D4 and D3 with the upload work, then D5 with auth.
 
@@ -292,7 +298,7 @@ Order inside the fixes: D1 and D2 first (nothing real can run without them), the
 | F6 | The Python environment in `backend/.venv` was made on a Mac (`pyvenv.cfg` points to `/Library/Developer/...`) and cannot run on this Windows machine as it is | `backend/.venv/pyvenv.cfg` | A new environment must be built here (links to D2 and O14) |
 | F7 | `.gitignore` line 29 pattern `.env.*` also ignores `.env.example`, which the blueprint says to add and track | `.gitignore:29`, `blueprint.md` §14 item 1 | The example file needs an exception rule or it will never be committed |
 | F8 | Upload jobs keep the saved file path (`sourcePath`). The processing response schema does not list it, so it is not sent to the browser | `upload_service.py:43-59`, `schemas/processing.py` | Checked and fine; recorded so nobody adds it to the schema by mistake |
-| F9 | The Supabase table definitions are in the repo: 11 tables (`organizations`, `profiles`, `organization_members`, `projects`, `videos`, `reports`, `processing_jobs`, `notifications`, `api_keys`, `invoices`, `user_sessions`), row-level security on all of them, and a trigger that creates a profile at sign-up. Earlier versions of this file said they were not visible; that was wrong, the search had missed this folder | `frontend/supabase/migrations/20260729043122_create_all_tables.sql`, `20260729043159_add_all_rls_policies.sql` | A second data store already models projects, videos, reports and jobs, scoped to an organisation. Where the record lives is open item O48 in `REQUIREMENTS.md`. Nothing shows a Supabase project with these tables is running |
+| F9 | The Supabase table definitions are in the repo: 11 tables (`organizations`, `profiles`, `organization_members`, `projects`, `videos`, `reports`, `processing_jobs`, `notifications`, `api_keys`, `invoices`, `user_sessions`), row-level security on all of them, and a trigger that creates a profile at sign-up. Earlier versions of this file said they were not visible; that was wrong, the search had missed this folder | `frontend/supabase/migrations/20260729043122_create_all_tables.sql`, `20260729043159_add_all_rls_policies.sql` | A second data store already models projects, videos, reports and jobs, scoped to an organisation. O48 is decided: backend PostgreSQL is the record. Nothing shows a Supabase project with these tables is running |
 | F10 | `profiles.id`, `organizations.id` and related ids are `uuid`. The fake ids `"1"` and `"org-1"` from `auth.tsx:73-91` are not valid uuids, so the profile and organisation calls should fail with an invalid-id error. `MyProfilePage.tsx:64-68` ignores the result and shows "Saved" anyway | `create_all_tables.sql:32-33,22-23`; `MyProfilePage.tsx:64-68`; `OrganizationPage.tsx:101` | Explains D5 more exactly (by reading; not run) |
 | F11 | Onboarding probably cannot finish under these security rules. Step 1 inserts an organisation and reads it back (`OnboardingPage.tsx:36-40`), but the read rule needs the person to already be a member (`add_all_rls_policies.sql:9-13`). Step 2 adds the first member (`OnboardingPage.tsx:48-55`), but the insert rule needs the person to already be an active owner or admin of that organisation (`add_all_rls_policies.sql:49-59`). By reading; not run; extra rules in a live Supabase project would change this | as listed | Onboarding needs a rework (one database function, or a different order) before real login is useful (D5, GAP-2) |
 | F12 | A user may edit their own profile row, including `role` and `organization_id` (`update_own_profile`), but no security rule reads those two columns (every rule checks `organization_members`), so this changes what the app shows, not what the database allows. The real escalation: an admin may add a member with any role, and may change any member's role, including their own, to `owner`, because neither rule checks who the member is or limits the role (`insert_org_member_admin`, `update_org_member_admin`) | `add_all_rls_policies.sql:32-34,49-79` | An admin can make themselves or anyone else an owner. Needs a fix before any real use (blueprint §11) |
@@ -310,6 +316,9 @@ Order inside the fixes: D1 and D2 first (nothing real can run without them), the
 
 ---
 
+<!-- Adrishikhar - 7 November 2026, 17:40 (Asia/Dhaka) · Fix approved
+Requested/approved by: Adrishikhar Barua. Changed by: Codex.
+Fix: Correct Sprint 3 placeholder status without approving a sprint plan. Documentation correction; runtime implementation pending. -->
 ## 10. Open items
 
 Owner for all: the user. "Default" is what the plan assumes if no answer comes.
@@ -321,7 +330,7 @@ Owner for all: the user. "Default" is what the plan assumes if no answer comes.
 | O3 | Production file storage | S3-compatible object storage; local folder for development, behind a storage interface |
 | O4 | Queue / worker | Keep FastAPI background task until Sprint 3; then a separate worker process with a jobs table. No product named yet |
 | O5 | Hosting | Not chosen. No default. Needed before Sprint 7 only |
-| O6 | First sprint to document in detail | Sprint 2: connect frontend to backend. `docs/sprints/SPRINT-03.md` is empty |
+| O6 | First sprint to document in detail | Sprint 2: connect frontend to backend. `docs/sprints/SPRINT-03.md` contains a planning-status placeholder; no Sprint 3 execution plan is approved |
 | O7 | Job status word: `running` or `processing` | `running` (blueprint wording) |
 | O8 | Upload limits: allowed types, maximum size, maximum duration, and unit of `MAX_VIDEO_LENGTH` | Not decided. `MAX_VIDEO_SIZE` default is 20 GB, which is large; suggest asking before accepting it |
 | O9 | Exact allowed job moves (section 4) | The table in section 4 |
@@ -346,4 +355,9 @@ Owner for all: the user. "Default" is what the plan assumes if no answer comes.
 - `blueprint.md` §7 says the frontend has a `data/` folder "used by the current UI". It is not used (searched).
 - `blueprint.md` §14 item 2 says backend settings should load env vars consistently. Today only the AI settings do.
 - `AI_RULES.md` "Never fetch directly inside pages": pages call Supabase directly: five files, ten calls (`MyProfilePage.tsx:64,86`, `OrganizationPage.tsx:53,76,101`, `OnboardingPage.tsx:36,48,63`, `RegisterPage.tsx:32`, `ForgotPasswordPage.tsx:19`). Flagged once; not changed.
-- `docs/sprints/SPRINT-03.md` is empty.
+- `docs/sprints/SPRINT-03.md` contains a planning-status placeholder; no Sprint 3 execution plan is approved.
+
+
+### Approved flow correction reference — 2026-11-07
+
+[LOW_LEVEL_DESIGN section 18](LOW_LEVEL_DESIGN.md#18-approved-backend-flow-corrections) records FD1–FD8: counting modes and totals, generated storage keys, metadata locking and snapshots, independent worker supervision with attempt checks, transactional notifications, retention restrictions, and one video per workflow. Adrishikhar Barua approved these documentation corrections; Codex edited them. Runtime implementation remains pending. Dated approved decisions override earlier blueprint statements and draft defaults; unrelated open items remain open.
