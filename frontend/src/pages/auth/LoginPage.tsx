@@ -1,17 +1,26 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, AlertCircle, ArrowRight } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 import { Input, Button } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
+import { takeCallbackNotice } from '@/lib/authNotice';
+import { AuthError } from '@/services/auth.service';
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, accountError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // A bad email link (expired or already used) leaves a message to show here. Read in an effect, not in the
+  // state initialiser: React runs initialisers twice in development and the second run would find it already taken.
+  useEffect(() => {
+    const notice = takeCallbackNotice();
+    if (notice) setError(notice);
+  }, []);
 
 const handleSubmit = async (
   e: React.FormEvent
@@ -27,6 +36,11 @@ const handleSubmit = async (
 
     navigate("/");
   } catch (err) {
+    // Signed up but never confirmed the email: take them to the page where they can ask for a new link.
+    if (err instanceof AuthError && err.code === "email_not_confirmed") {
+      navigate("/verify-email", { state: { email } });
+      return;
+    }
     if (err instanceof Error) {
       setError(err.message);
     } else {
@@ -44,9 +58,9 @@ const handleSubmit = async (
         <p className="mt-1 text-sm text-ink-400">Sign in to your Johnson Road account.</p>
       </div>
 
-      {error && (
+      {(error || accountError) && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-err-500/20 bg-err-500/[0.06] px-3 py-2.5 text-sm text-err-400">
-          <AlertCircle size={15} /> {error}
+          <AlertCircle size={15} /> {error || accountError}
         </div>
       )}
 

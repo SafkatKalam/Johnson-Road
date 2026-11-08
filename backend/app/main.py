@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.auth.deps import current_member
 
 from app.ai.runtime import airuntime
 from app.core.config import settings
@@ -9,7 +11,14 @@ from app.core.errors import AppError, register_error_handlers
 from app.core.health import database_ready, schema_current, worker_ready
 from app.core.logging_setup import configure_logging
 from app.core.request_context import REQUEST_ID_HEADER, RequestIdMiddleware
-from app.routers import dashboard_router, processing_router, projects_router, reports_router, uploads_router
+from app.routers import (
+    account_router,
+    dashboard_router,
+    processing_router,
+    projects_router,
+    reports_router,
+    uploads_router,
+)
 
 configure_logging()
 
@@ -42,11 +51,14 @@ app.add_middleware(
     expose_headers=[REQUEST_ID_HEADER],
 )
 
-app.include_router(dashboard_router, prefix=settings.api_prefix)
-app.include_router(projects_router, prefix=settings.api_prefix)
-app.include_router(uploads_router, prefix=settings.api_prefix)
-app.include_router(processing_router, prefix=settings.api_prefix)
-app.include_router(reports_router, prefix=settings.api_prefix)
+# Account routes need a valid sign-in but no organisation yet (FD16). Everything else needs an active membership.
+app.include_router(account_router, prefix=settings.api_prefix)
+_members_only = [Depends(current_member)]
+app.include_router(dashboard_router, prefix=settings.api_prefix, dependencies=_members_only)
+app.include_router(projects_router, prefix=settings.api_prefix, dependencies=_members_only)
+app.include_router(uploads_router, prefix=settings.api_prefix, dependencies=_members_only)
+app.include_router(processing_router, prefix=settings.api_prefix, dependencies=_members_only)
+app.include_router(reports_router, prefix=settings.api_prefix, dependencies=_members_only)
 
 
 

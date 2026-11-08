@@ -57,7 +57,7 @@ def test_wrong_method_uses_error_shape(client):
     _assert_error_shape(r.json())
 
 
-def test_validation_error_is_422_without_echoing_input(client):
+def test_validation_error_is_422_without_echoing_input(client, as_member):
     r = client.post("/api/uploads", data={"notes": "SECRET-VALUE-123"})
     assert r.status_code == 422
     body = r.json()
@@ -89,7 +89,7 @@ def test_unexpected_error_is_500_with_diagnostic_id_and_no_leak(client):
 
 # --- as-built behaviour kept (legacy routes are not changed by F3) -------------
 
-def test_legacy_unknown_job_still_returns_200_not_found(client):
+def test_legacy_unknown_job_still_returns_200_not_found(client, as_member):
     r = client.get("/api/processing/jobs/does-not-exist")
     assert r.status_code == 200
     assert r.json().get("status") == "not_found"

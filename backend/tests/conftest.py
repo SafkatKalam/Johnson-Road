@@ -69,6 +69,57 @@ def _known_failure():
     raise AppError("job_not_cancellable", 409, "This job has already finished and cannot be cancelled.")
 
 
+@pytest.fixture()
+def as_member():
+    """Skip sign-in for tests about something else (legacy sample-data routes): the caller is a fake member."""
+    from app.auth.deps import Principal, current_member
+    from app.auth.tokens import Identity
+
+    principal = Principal(
+        user={"id": "u1", "email": "t@example.com", "status": "active"},
+        identity=Identity("sub-1", "t@example.com"),
+        organization_id="o1", organization={"id": "o1", "name": "Org", "slug": "org", "plan": "starter"}, role="owner",
+    )
+    app.dependency_overrides[current_member] = lambda: principal
+    yield principal
+    app.dependency_overrides.pop(current_member, None)
+
+
+@pytest.fixture()
+def verifier(monkeypatch):
+    """A token verifier trusting the local test key. Returns the FakeJWKS so a test can change the keys."""
+    from app.auth import tokens
+    from auth_support import SUPABASE_URL, FakeJWKS
+
+    jwks = FakeJWKS()
+    monkeypatch.setattr(tokens, "_verifier", tokens.TokenVerifier(SUPABASE_URL, "authenticated", 10, jwks))
+    return jwks
+
+
+@pytest.fixture()
+def auth_db(migrated):
+    """The app's database dependency pointed at a throwaway migrated database."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.database.database import get_db
+
+    engine = create_engine(migrated.replace("postgresql://", "postgresql+psycopg://", 1), pool_pre_ping=True)
+    maker = sessionmaker(autoflush=False, autocommit=False, bind=engine)
+
+    def override():
+        db = maker()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override
+    yield maker
+    app.dependency_overrides.pop(get_db, None)
+    engine.dispose()
+
+
 @pytest.fixture(scope="session")
 def client():
     # Test-only routes exist only while the tests run; they are removed afterwards.

@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     backend_port: int = 5000
     frontend_origin: str = "http://localhost:3000"
     database_url: str  # required: no default, so a missing setting is reported, not guessed
+    # Supabase signs people in (O48). The project URL is public; no secret is needed because the backend
+    # verifies tokens with the project's public signing keys. Without it every protected route answers 503.
+    supabase_url: str | None = None
+    supabase_jwt_audience: str = "authenticated"
+    jwt_leeway_seconds: int = 10  # tolerated clock difference between Supabase and this server
     storage_root: str = "data"
     s3_endpoint: str = "http://127.0.0.1:9110"
     s3_region: str = "us-east-1"
@@ -41,6 +46,15 @@ class Settings(BaseSettings):
         if not value.startswith("postgresql+psycopg://"):
             raise ValueError("must start with postgres:// or postgresql://")
         return value
+
+    @field_validator("supabase_url")
+    @classmethod
+    def check_supabase_url(cls, value: str | None) -> str | None:
+        if value is None or value == "":
+            return None
+        if not value.startswith(("https://", "http://localhost", "http://127.0.0.1")):
+            raise ValueError("must be an https:// project URL such as https://abcd.supabase.co")
+        return value.rstrip("/")
 
     @field_validator("frontend_origin")
     @classmethod

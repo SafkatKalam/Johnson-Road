@@ -29,6 +29,46 @@ Not decided and still open: error shape O26 (implemented as the default, a Propo
 
 Not done in Stage A: F01 (needs the client); repositories (come with the features that use them); database roles and grants (O71); per-job tracker reset; a privileged diagnostics endpoint (needs sign-in, F07).
 
+## 2b. Stage B, sign-in group (F07–F12), recorded 2026-11-08 (later the same day)
+
+Decisions given by Adrishikhar Barua in the conversation:
+
+| ID | Decision | Evidence | Limits |
+|---|---|---|---|
+| DEC-AUTH-01 | New Supabase project `tbikgagbnheijjmnorea` (Singapore) is the sign-in provider; its public URL and publishable key are used (old project `frgbtqkdbumrbneqlfjb` is no longer used) | screenshots and paste in the conversation | Sign-in only. The backend never uses the project's database. |
+| DEC-AUTH-02 | Frontend sign-in files may be changed: `services/api.ts`, `services/auth.service.ts`, `lib/auth.tsx`, `lib/supabase.ts`, `lib/authNotice.ts`, `App.tsx` (onboarding guard), `pages/auth/{Login,Register,VerifyEmail}Page.tsx` | "approve" to the plan of 2026-11-08 | Scope expansion beyond `AGENTS.md` for these files only. No visual redesign. |
+| DEC-AUTH-03 | Test accounts `adrishikharbarua77452@gmail.com` (owner) and `adrishikharbarua77452v1@gmail.com` (admin) get one local organisation "Johnson Road (test)" in the local Docker database | "approve" and the Supabase user created by Adrishikhar | Local development seed only. Undo: `delete from users where email like 'adrishikharbarua77452%'` removes users, memberships (cascade); then delete the organisation. |
+| DEC-AUTH-04 | Sign-out ends this device only (default offered; no objection) | plan of 2026-11-08, "approve" | Proposal accepted by silence; not an explicit choice between the two options. |
+
+Not decided, defaults used: O11 (email verification is not enforced by this app; Supabase's own "Confirm email" setting is currently ON, so unconfirmed users cannot sign in); O27 (password change); O51 (token details: ES256 with the project's public key, only ES256/RS256 accepted).
+
+| Feature | Built | Verified | Not done or not verified |
+|---|---|---|---|
+| F07 Backend identity | `app/auth/` (token check, dependencies), `GET /api/me`, all legacy routes need an active membership (FD16) | 244 backend tests (every bad-token kind, concurrent first sign-in, role/org only from PostgreSQL); real Supabase public key fetched; a forged token with the real key id refused | Roles and grants for the database user (O71) |
+| F08 Sign-up | `AuthService.register` (plain-word errors, existing address not treated as a new account) | type check, lint | No real sign-up run in a browser |
+| F09 Email verification | Resend with 60-second wait, address carried in router state (not the URL), truthful "Continue" check, expired/used link messages captured before the Supabase client starts | type check, lint | Never exercised with a real email (Supabase's built-in sender; Resend not connected); O11 gate not built (by default) |
+| F10 Sign-in | `AuthService.login`, `AuthProvider`, bearer token on every API call; the fake login and fixed user are removed | Adrishikhar's sign-in reached `/api/me` with 200 (backend log, 2026-11-08 14:07) | Wrong-password, double-click and network-failure paths not tried in a browser |
+| F11 Session | Session restore, multi-tab listener, 401 handling, one account load per token, onboarding redirect loop fixed (`SignedInRoute`) | type check, lint; backend refuses removed or suspended membership (tests) | Refresh, second tab, expiry not tried in a browser |
+| F12 Sign-out | `AuthService.logout` (`scope: 'local'`), on-screen state always cleared, old `jr-auth` flag removed | type check, lint | "Back shows no protected data" not tried in a browser |
+
+Independent audit of F07–F12 (read-only reviewer, 2026-11-08, 23 findings). Fixed the same day:
+- `emailVerified` removed from `/api/me`: it was read from `user_metadata`, which the signed-in person can edit, so it could be forged. The backend no longer claims email verification at all. The app relies on Supabase's "Confirm email" setting (O11); if that is ever turned off, do not match invitations or merge accounts by email.
+- Unknown token key ids can no longer force repeated downloads of Supabase's key list (one miss pauses other unknown ids for 10 seconds); tested against the real `PyJWKClient` and a local key server, including RS256, no key id, a future `iat`, and a key-server outage.
+- The email-conflict error is raised only for the real email constraint; other database errors surface as errors.
+- Every `/api` route and method (not only GET) is tested for protection, and a test fails if a route is mounted without the membership check.
+- Frontend: stale account response after sign-out or switch is dropped (generation counter); failed sign-out still removes the stored session and never throws; each backend failure has its own message (suspended, email already linked, server unreachable); an expired token on any call signs out; "email not confirmed" at sign-in opens the verify page; verify page has its own email box when opened without one; resend wait survives a reload; email-link errors are read from the hash and the query string, whole parameters only.
+Left as decided or open: Onboarding page still writes to non-existent Supabase tables and loops (F15). Forgot-password page shows provider text and has no reset-completion page (F13). Frontend has no automated tests (no runner installed; adding vitest needs an install). Sign-up tells a visitor when an address already has an account (convenience over anti-enumeration; decision not taken). Redirect URLs in Supabase must also allow `http://127.0.0.1:3000/**` if the app is opened at that address. `/docs`, `/openapi.json` and `/health` are public (O26).
+Known broken until later features: the onboarding page (F15) and the organisation page (F16) still read or write Supabase tables that do not exist in the new project. (The forgot-password page and the profile page no longer do: F13 and F14 below.)
+
+**F13 and F14 built, 2026-11-08 (later).** `PATCH /api/me` (name and https avatar address only; role, organisation, email and status are refused with 422; 29 new backend tests, 286 in total); `ProfileService`; password change re-checks the current password first (O27 default), then signs out the person's other devices; forgot-password answers the same for known and unknown addresses (a sending limit used to reveal which addresses exist); `/reset-password` page that only accepts a real recovery session; email-link errors in the address bar are shown as plain messages.
+
+**Browser test, 2026-11-08: 41 of 41 checks pass in Edge 157 and in Brave 157** (a script outside the repo using `playwright-core`, headless, real Supabase project, real local backend). It covers: sign-in page, wrong password, unconfirmed account sent to the verify page and resend, expired email link, a no-organisation account lands on `/onboarding` without looping, one user row on first sign-in, protected pages when signed out, dashboard with an organisation, no fake user anywhere, refresh and a second tab, one `/api/me` call per load, a bearer token on every API call, name change stored in PostgreSQL and shown after reload, bad avatar address refused without "Saved", protected fields refused, password change (wrong current, mismatch, too short, same, success; old password dead, new works; another device's session revoked), sign-out (session removed, Back does not show the dashboard, an interrupted sign-out finished on reload, second tab signed out), forgot password (neutral answer), password reset from a real Supabase recovery link (mismatch and short refused, success, old password dead, other device revoked, link not reusable, ordinary signed-in person refused), sign-up validation and an already-registered address.
+
+Bugs the browser test found and fixed (none visible to the type check, lint or backend tests): form labels were not linked to their inputs (`Input.tsx`, accessibility); the email-link message vanished because React runs state initialisers twice in development; forgot-password revealed which addresses have accounts; a sign-out left the session stored for about a second, so a reload in that moment could undo it.
+Not covered: real email delivery (Supabase's built-in sender only mails project team addresses; Resend is not connected), the onboarding form (F15), and the organisation, member, invitation and settings pages (F16–F19).
+The test creates throwaway users `jr-e2e-*@example.com` in the Supabase project and organisations `E2E Org *` in the local database. They were not deleted.
+Also fixed on 2026-11-08: the frontend dev server listened on IPv6 only (`[::1]`); `vite.config.ts` now sets `host: '127.0.0.1'`.
+
 ## 3. Verification actually performed
 
 - `REQUIRE_DB=1 pytest tests`: **156 passed, 0 skipped**, run against the Docker PostgreSQL 16.15 (throwaway databases, dropped afterwards).

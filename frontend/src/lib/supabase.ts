@@ -1,4 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
+import { captureCallbackNotice } from '@/lib/authNotice';
+
+// Must run before the client below is created: the client may clear an email link's error from the address.
+captureCallbackNotice();
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
@@ -9,6 +13,46 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     autoRefreshToken: true,
     detectSessionInUrl: true,
   },
+});
+
+// A password-reset link signs the person in with a special "recovery" session. Only that kind of session may
+// set a new password without typing the old one, so it is remembered (for this tab) until the password is changed.
+const RECOVERY_KEY = 'jr-recovery';
+
+function readRecoveryFlag(): boolean {
+  try {
+    return sessionStorage.getItem(RECOVERY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+let recovery = readRecoveryFlag();
+
+export function isRecoverySession(): boolean {
+  return recovery;
+}
+
+export function clearRecoverySession(): void {
+  recovery = false;
+  try {
+    sessionStorage.removeItem(RECOVERY_KEY);
+  } catch {
+    /* storage can be blocked */
+  }
+}
+
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'PASSWORD_RECOVERY') {
+    recovery = true;
+    try {
+      sessionStorage.setItem(RECOVERY_KEY, '1');
+    } catch {
+      /* storage can be blocked */
+    }
+  } else if (event === 'SIGNED_OUT') {
+    clearRecoverySession();
+  }
 });
 
 export type OrganizationPlan = 'starter' | 'pro' | 'enterprise';

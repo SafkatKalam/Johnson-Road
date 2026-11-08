@@ -40,6 +40,7 @@ class AppError(Exception):
         message: str,
         diagnostic_id: str | None = None,
         details: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(code)
         self.code = code
@@ -47,6 +48,7 @@ class AppError(Exception):
         self.message = message
         self.diagnostic_id = diagnostic_id
         self.details = details
+        self.headers = headers
 
 
 def _body(code: str, message: str, diagnostic_id: str | None, details: dict[str, Any] | None = None) -> dict:
@@ -65,7 +67,7 @@ def _respond(request: Request, status: int, body: dict, headers: dict[str, str] 
 
 
 async def _app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-    return _respond(request, exc.http_status, _body(exc.code, exc.message, exc.diagnostic_id, exc.details))
+    return _respond(request, exc.http_status, _body(exc.code, exc.message, exc.diagnostic_id, exc.details), exc.headers)
 
 
 async def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

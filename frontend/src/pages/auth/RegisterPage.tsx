@@ -3,10 +3,12 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Mail, Lock, User, AlertCircle, ArrowRight, Check } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 import { Input, Button } from '@/components/ui';
-import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth';
+import { AuthService } from '@/services/auth.service';
 
 export function RegisterPage() {
   const navigate = useNavigate();
+  const { refreshProfile } = useAuth();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -29,22 +31,16 @@ export function RegisterPage() {
 
     setLoading(true);
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { full_name: fullName } },
-    });
-
-    if (signUpError) {
-      setError(signUpError.message);
-      setLoading(false);
-      return;
-    }
-
-    if (data.user) {
-      navigate('/verify-email');
-    } else {
-      setError('Registration failed. Please try again.');
+    try {
+      const { needsEmailConfirmation } = await AuthService.register(fullName, email, password);
+      // With email confirmation off the person is already signed in: load the account first, so the route
+      // guards see a signed-in person and do not bounce them to the sign-in page.
+      if (!needsEmailConfirmation) await refreshProfile();
+      navigate(needsEmailConfirmation ? '/verify-email' : '/', {
+        state: needsEmailConfirmation ? { email } : undefined, // router state, not the URL: no personal data in addresses
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Registration failed. Please try again.');
       setLoading(false);
     }
   };

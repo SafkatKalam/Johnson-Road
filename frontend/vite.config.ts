@@ -14,6 +14,9 @@ export default defineConfig({
     exclude: ['lucide-react'],
   },
   server: {
+    // 127.0.0.1 = this computer only. Without it Node listens on IPv6 only ([::1]) and some browsers
+    // cannot open the page; "localhost" falls back to IPv4 by itself.
+    host: '127.0.0.1',
     port: 3000,
     strictPort: true,
     open: true,

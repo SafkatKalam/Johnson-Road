@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { Card, CardHeader, Button, Input, Badge, Toggle } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
-import { supabase } from '@/lib/supabase';
+import { AuthService } from '@/services/auth.service';
+import { ProfileService, describeProfileError } from '@/services/profile.service';
 
 const tabs = [
   { id: 'personal', label: 'Personal Information', icon: User },
@@ -39,6 +40,7 @@ export function MyProfilePage() {
   const [avatarUrl, setAvatarUrl] = useState(profile?.avatar_url || '');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -61,11 +63,19 @@ export function MyProfilePage() {
 
   const handleSaveProfile = async () => {
     setSaving(true);
-    await supabase.from('profiles').update({ full_name: fullName, avatar_url: avatarUrl || null }).eq('id', user?.id);
-    await refreshProfile();
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    setSaveError('');
+    setSaved(false);
+    try {
+      // The backend saves the change; "Saved" is shown only after it said yes.
+      await ProfileService.update({ fullName, avatarUrl });
+      await refreshProfile();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setSaveError(describeProfileError(err));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -83,16 +93,16 @@ export function MyProfilePage() {
     }
 
     setPwLoading(true);
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    setPwLoading(false);
-
-    if (error) {
-      setPwError(error.message);
-    } else {
+    try {
+      await AuthService.changePassword(user?.email ?? '', currentPassword, newPassword);
       setPwSuccess(true);
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+    } catch (err) {
+      setPwError(err instanceof Error ? err.message : 'Could not change the password. Please try again.');
+    } finally {
+      setPwLoading(false);
     }
   };
 
@@ -145,6 +155,11 @@ export function MyProfilePage() {
                 <Input label="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
                 <Input label="Email" value={user?.email || ''} disabled hint="Contact support to change your email address." />
                 <Input label="Avatar URL" placeholder="https://…" value={avatarUrl} onChange={(e) => setAvatarUrl(e.target.value)} hint="Paste an image URL for your avatar." />
+                {saveError && (
+                  <div role="alert" className="rounded-lg border border-err-500/20 bg-err-500/[0.06] px-3 py-2.5 text-sm text-err-400">
+                    {saveError}
+                  </div>
+                )}
                 <Button leftIcon={saved ? <Check size={15} /> : <Save size={15} />} onClick={handleSaveProfile} disabled={saving}>
                   {saved ? 'Saved' : saving ? 'Saving…' : 'Save Changes'}
                 </Button>

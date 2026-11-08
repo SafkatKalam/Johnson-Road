@@ -1,4 +1,4 @@
-import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, useId, type InputHTMLAttributes, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
@@ -10,7 +10,9 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ label, hint, leftIcon, rightSlot, className, id, ...props }, ref) => {
-    const inputId = id || props.name;
+    // Always give the input an id, so its label is really linked to it (screen readers, click-on-label, tests).
+    const autoId = useId();
+    const inputId = id || props.name || autoId;
     return (
       <div className="w-full">
         {label && (

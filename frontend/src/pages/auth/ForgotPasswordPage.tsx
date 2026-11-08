@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Mail, AlertCircle, ArrowLeft, CheckCircle2 } from 'lucide-react';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 import { Input, Button } from '@/components/ui';
-import { supabase } from '@/lib/supabase';
+import { AuthService } from '@/services/auth.service';
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -16,16 +16,14 @@ export function ForgotPasswordPage() {
     setError('');
     setLoading(true);
 
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email);
-
-    if (resetError) {
-      setError(resetError.message);
+    try {
+      await AuthService.requestPasswordReset(email);
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send the email. Please try again.');
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setSent(true);
-    setLoading(false);
   };
 
   return (
@@ -44,7 +42,7 @@ export function ForgotPasswordPage() {
           </div>
           <h3 className="mt-4 text-sm font-semibold text-white">Check your inbox</h3>
           <p className="mt-2 text-sm text-ink-400">
-            We've sent a password reset link to <span className="font-medium text-ink-200">{email}</span>.
+            If an account exists for <span className="font-medium text-ink-200">{email}</span>, we've sent a password reset link.
           </p>
           <Link to="/login" className="mt-5 inline-block">
             <Button variant="secondary" size="sm" leftIcon={<ArrowLeft size={14} />}>
