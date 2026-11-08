@@ -14,7 +14,9 @@ The runnable-looking SQL is `docs/schema.sql`. This file explains it in plain wo
 <!-- Adrishikhar - 7 November 2026, 17:45 (Asia/Dhaka) · Fix approved
 Requested/approved by: Adrishikhar Barua. Changed by: Codex.
 Fix: Distinguish completed static checks from pending PostgreSQL execution. Runtime implementation pending. -->
-> **The SQL has not been executed or validated against PostgreSQL.** Static consistency and whitespace checks have been performed; they do not prove SQL execution, trigger behavior or service invariants. Run the draft on a fresh, empty PostgreSQL 16 test database and exercise its constraints before using it as a migration. It runs as one transaction (`BEGIN` ... `COMMIT`), intentionally without `IF NOT EXISTS`. Later changes need the migration tool (O63).
+> **Update 2026-11-08 (see [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)):** the SQL was executed on PostgreSQL 16.15 (Docker) with no errors (21 tables) and is applied as `backend/migrations/0001_initial.sql`; constraints and triggers are covered by tests that use real commits. Service-level invariants are still not proven. The paragraph below is the original draft note.
+>
+> **Original draft note (2026-11-07): the SQL had not been executed or validated against PostgreSQL.** Static consistency and whitespace checks had been performed; they do not prove SQL execution, trigger behavior or service invariants. Run the draft on a fresh, empty PostgreSQL 16 test database and exercise its constraints before using it as a migration. It runs as one transaction (`BEGIN` ... `COMMIT`), intentionally without `IF NOT EXISTS`. Later changes need the migration tool (O63).
 
 > **SQLite cannot run this file.** Eight of the 31 invariants in section 6 need Postgres-only triggers or `NULLS NOT DISTINCT` (8, 10, 11, 12, 17, 23, 27, 28). The file also uses `btrim()` (SQLite has `trim`), `jsonb_typeof()` inside a CHECK, and SQLite ignores foreign keys unless `PRAGMA foreign_keys=ON` is set on every connection. Decision O72 (SCOPE section 9) approves PostgreSQL for local development too.
 

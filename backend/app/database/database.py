@@ -1,11 +1,15 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = "sqlite:///./johnson_road.db"
+from app.core.config import settings
 
+DATABASE_URL = settings.database_url
+
+# pool_pre_ping: drop dead connections (for example after the database container restarts).
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    pool_pre_ping=True,
+    connect_args={"connect_timeout": 10},
 )
 
 SessionLocal = sessionmaker(

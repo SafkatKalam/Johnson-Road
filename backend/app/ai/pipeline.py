@@ -34,9 +34,30 @@ class AIPipeline:
     ) -> None:
         self.video_loader = video_loader or VideoLoader()
         self.frame_reader = frame_reader or FrameReader()
-        self.detector = detector or airuntime.get_detector()
-        self.tracker = tracker or TrackerFactory.create()
         self.counter = counter or Counter()
+        # The detector and tracker are resolved when first needed, not when this module loads, so the API
+        # still starts when no model is configured or the model failed to load (F6).
+        self._detector = detector
+        self._tracker = tracker
+
+    @property
+    def detector(self) -> Detector:
+        if self._detector is None:
+            return airuntime.get_detector()  # raises DetectorLoadError when none is available
+        return self._detector
+
+    @property
+    def detector_name(self) -> str:
+        """Class name of the detector in use, or "none". Never raises (safe inside error handling)."""
+        if self._detector is not None:
+            return type(self._detector).__name__
+        return airuntime.get_status().detector_name
+
+    @property
+    def tracker(self) -> Tracker:
+        if self._tracker is None:
+            self._tracker = TrackerFactory.create()
+        return self._tracker
 
     def run(self, file_path: str) -> PipelineResult:
         pipeline_start = time.perf_counter()

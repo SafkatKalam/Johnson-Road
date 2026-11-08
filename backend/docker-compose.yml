@@ -1,0 +1,47 @@
+# Local development database for Johnson Road (decision O72: PostgreSQL locally).
+# Approved 2026-11-08 by Adrishikhar Barua: PostgreSQL 16, alpine image, host port 5430.
+# File storage: MinIO (S3-compatible) below. The official MinIO images can no longer be downloaded, so it uses the
+# legacy Bitnami image (unmaintained: local development only). STORAGE_ROOT is only a fallback path setting.
+# Values come from backend/.env (not committed). Start: docker compose up -d   (run inside backend/)
+# Stop (data kept): docker compose down      Stop and erase data: docker compose down -v
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: johnson-road-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in backend/.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in backend/.env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in backend/.env}
+    ports:
+      # Bound to this computer only; not reachable from the network.
+      - "127.0.0.1:5430:5432"
+    volumes:
+      - jr_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Local S3-compatible file storage. Approved 2026-11-08 by Adrishikhar Barua.
+  # Uses the legacy Bitnami image already on this computer (MinIO's own images are no longer
+  # downloadable). Unmaintained: local development only.
+  minio:
+    # Pinned by digest (the exact image already on this computer), not by the moving "latest" tag.
+    image: bitnamilegacy/minio@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+    container_name: johnson-road-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in backend/.env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in backend/.env}
+      MINIO_DEFAULT_BUCKETS: ${S3_BUCKET:?set S3_BUCKET in backend/.env}
+    ports:
+      - "127.0.0.1:9110:9000"   # S3 API
+      - "127.0.0.1:9111:9001"   # web console
+    volumes:
+      - jr_miniodata:/bitnami/minio/data
+
+volumes:
+  jr_pgdata:
+  jr_miniodata:

@@ -1,0 +1,10 @@
+# The real detector (MODEL=yolo8). Install on top of requirements.txt:
+#   pip install -r requirements-ai.txt
+# GPU build for CUDA 12.8 (tested on an RTX 5060 laptop GPU, Python 3.14). For a machine without an NVIDIA
+# GPU, install the CPU wheels instead: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# --extra-index-url makes pip look at both indexes for every package. Only torch/torchvision come from the
+# PyTorch index and every version below is pinned; keep it that way (do not add unpinned packages here).
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+ultralytics==8.4.207

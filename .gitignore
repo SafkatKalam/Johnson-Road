@@ -27,3 +27,10 @@ frontend/node_modules/
 # Environment
 .env
 .env.*
+!.env.example
+
+# Local file storage (uploads, previews, outputs)
+backend/data/
+
+# Windows backend virtualenv
+backend/.venv-win/
