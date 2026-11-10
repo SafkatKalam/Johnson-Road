@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.auth.tokens import Identity, get_verifier
 from app.core.errors import AppError
 from app.database.database import get_db
-from app.repositories import user_repository
+from app.repositories import audit_repository, user_repository
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -56,6 +56,8 @@ def current_member(current: CurrentUser = Depends(current_user_only), db: Sessio
     if membership is None:
         raise AppError("onboarding_required", 403, "Finish setting up your organisation first.")
     if membership["member_status"] != "active":
+        audit_repository.record_refusal(db, action="request_refused", organization_id=membership["org_id"],
+                                        actor_user_id=current.user["id"], reason_code="membership_suspended")
         raise AppError("membership_suspended", 403, "Your membership of this organisation is suspended.")
     return Principal(
         user=current.user,

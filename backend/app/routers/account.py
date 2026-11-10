@@ -75,6 +75,28 @@ class ProfileUpdate(BaseModel):
         return value
 
 
+class OnboardingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # nothing but the name: no role, plan or owner can be named
+
+    organizationName: str = Field(description="1 to 120 characters")
+
+    @field_validator("organizationName")
+    @classmethod
+    def check_name(cls, value: str) -> str:
+        value = value.strip()
+        if not 1 <= len(value) <= 120:
+            raise ValueError("must be 1 to 120 characters")
+        if _CONTROL_CHARS.search(value):
+            raise ValueError("must not contain control characters")
+        return value
+
+
+@router.post("/onboarding", status_code=201, summary="Create your organisation and become its owner")
+def onboarding(body: OnboardingRequest, current: CurrentUser = Depends(current_user_only), db: Session = Depends(get_db)):
+    membership = user_repository.create_first_organization(db, current.user["id"], body.organizationName)
+    return _account_body(current.user, membership)
+
+
 @router.patch("/me", summary="Change your own name or avatar address")
 def update_me(body: ProfileUpdate, current: CurrentUser = Depends(current_user_only), db: Session = Depends(get_db)):
     changes: dict[str, Any] = {}

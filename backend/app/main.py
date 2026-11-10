@@ -13,6 +13,8 @@ from app.core.logging_setup import configure_logging
 from app.core.request_context import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.routers import (
     account_router,
+    invites_router,
+    organization_router,
     dashboard_router,
     processing_router,
     projects_router,
@@ -53,7 +55,9 @@ app.add_middleware(
 
 # Account routes need a valid sign-in but no organisation yet (FD16). Everything else needs an active membership.
 app.include_router(account_router, prefix=settings.api_prefix)
+app.include_router(invites_router, prefix=settings.api_prefix)  # accepting an invitation needs no organisation yet
 _members_only = [Depends(current_member)]
+app.include_router(organization_router, prefix=settings.api_prefix, dependencies=_members_only)
 app.include_router(dashboard_router, prefix=settings.api_prefix, dependencies=_members_only)
 app.include_router(projects_router, prefix=settings.api_prefix, dependencies=_members_only)
 app.include_router(uploads_router, prefix=settings.api_prefix, dependencies=_members_only)

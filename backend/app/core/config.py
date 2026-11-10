@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # Supabase signs people in (O48). The project URL is public; no secret is needed because the backend
     # verifies tokens with the project's public signing keys. Without it every protected route answers 503.
     supabase_url: str | None = None
+    # Server-side only. Used for one thing: confirming an address really was confirmed before an invitation is accepted.
+    supabase_secret_key: str | None = None
     supabase_jwt_audience: str = "authenticated"
     jwt_leeway_seconds: int = 10  # tolerated clock difference between Supabase and this server
     storage_root: str = "data"

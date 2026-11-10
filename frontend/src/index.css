@@ -64,3 +64,30 @@ body {
     @apply bg-gradient-to-r from-brand-300 to-accent-400 bg-clip-text text-transparent;
   }
 }
+
+/* Reduced motion: the person's choice in Settings (data attribute) or the operating system's setting.
+   Text size: Settings > Accessibility changes the root size, and everything sized in rem follows it. */
+:root[data-font-size='small'] {
+  font-size: 14px;
+}
+:root[data-font-size='large'] {
+  font-size: 18px;
+}
+:root[data-reduce-motion='true'] *,
+:root[data-reduce-motion='true'] *::before,
+:root[data-reduce-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -52,7 +52,8 @@ interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
   ({ label, className, id, children, ...props }, ref) => {
-    const selectId = id || props.name;
+    const autoId = useId(); // same fix as Input: the label must always be linked to its select
+    const selectId = id || props.name || autoId;
     return (
       <div className="w-full">
         {label && (

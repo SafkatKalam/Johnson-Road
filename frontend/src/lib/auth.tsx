@@ -9,7 +9,8 @@ import {
 } from "react";
 import { isAxiosError } from "axios";
 import type { Session } from "@supabase/supabase-js";
-import { SESSION_EXPIRED_EVENT } from "@/services/api";
+import { clearPendingInvite } from "@/lib/pendingInvite";
+import { MEMBERSHIP_CHANGED_EVENT, SESSION_EXPIRED_EVENT } from "@/services/api";
 import {
   AuthError,
   AuthService,
@@ -51,7 +52,8 @@ interface AuthContextType {
 
   login(email: string, password: string): Promise<void>;
 
-  signOut(): Promise<void>;
+  /** `keepInvite`: keep a saved invitation (used by "sign out and use another account" and by session expiry). */
+  signOut(options?: { keepInvite?: boolean }): Promise<void>;
 
   refreshProfile(): Promise<void>;
 }
@@ -162,8 +164,11 @@ export function AuthProvider({
     [applyAccount, clearAccount]
   );
 
-  const signOut = useCallback(async () => {
+  const signOut = useCallback(async (options?: { keepInvite?: boolean }) => {
     inflight.current = null;
+    // A saved invitation belongs to the person who opened it, never to the next person: a plain sign-out forgets it.
+    // It is kept when the person is only switching to the right account, or the session ended by itself.
+    if (!options?.keepInvite) clearPendingInvite();
     AuthService.beginSignOut(); // a reload before the server answers must finish the sign-out, not undo it
     clearAccount(); // first, so nothing from this person stays on screen even if the next step is slow
     setAccountError("");
@@ -207,14 +212,22 @@ export function AuthProvider({
 
     // The server refused our token on an ordinary call (expired, revoked): end this session here too.
     const onExpired = () => {
-      if (active) void signOut();
+      if (active) void signOut({ keepInvite: true }); // the session ended by itself: do not lose a saved invitation
     };
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+
+    // The server says our membership changed (removed, suspended) while a screen was open: load the account again,
+    // so the guards send the person where they belong instead of showing "try again" forever.
+    const onMembershipChanged = () => {
+      if (active) void AuthService.getSession().then((session) => syncAccount(session));
+    };
+    window.addEventListener(MEMBERSHIP_CHANGED_EVENT, onMembershipChanged);
 
     return () => {
       active = false;
       subscription.unsubscribe();
       window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+      window.removeEventListener(MEMBERSHIP_CHANGED_EVENT, onMembershipChanged);
     };
   }, [syncAccount, signOut]);
 

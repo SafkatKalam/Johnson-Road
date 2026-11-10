@@ -9,6 +9,9 @@ from app.main import app
 
 SUB = "11111111-1111-1111-1111-111111111111"
 
+# FD16: these routes need a valid sign-in but NOT an organisation (account, onboarding, accepting an invitation).
+SIGNED_IN_ONLY = {"/api/me", "/api/onboarding", "/api/invites/accept"}
+
 
 def rows(maker, sql, **params):
     with maker() as db:
@@ -62,6 +65,18 @@ def test_many_simultaneous_first_calls_create_exactly_one_user(client, verifier,
     assert {r.status_code for r in results} == {200}
     assert len({r.json()["user"]["id"] for r in results}) == 1
     assert len(rows(auth_db, "select id from users")) == 1
+
+
+def test_first_call_race_never_gives_a_wrong_email_in_use_error_over_many_rounds(client, verifier, auth_db):
+    """The earlier single burst hid a real race (the email index clashed with the sign-in-id rule). 15 bursts of 12
+    simultaneous first calls, each for a different new person, must all succeed with exactly one row each."""
+    for round_no in range(15):
+        sub = f"{round_no + 1:08d}-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        tok = bearer(token(sub=sub, email=f"racer{round_no}@example.com"))
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            codes = list(pool.map(lambda _: client.get("/api/me", headers=tok).status_code, range(12)))
+        assert set(codes) == {200}, f"round {round_no}: {sorted(set(codes))}"
+        assert len(rows(auth_db, "select id from users where auth_subject = :s", s=sub)) == 1
 
 
 def test_changed_email_in_the_token_updates_our_copy(client, verifier, auth_db):
@@ -206,7 +221,7 @@ def _protected_routes():
     found = []
     for route in app.routes:
         path = getattr(route, "path", "")
-        if not path.startswith("/api/") or path == "/api/me":
+        if not path.startswith("/api/") or path in SIGNED_IN_ONLY:
             continue
         concrete = re.sub(r"\{[^}]+\}", "x1", path)
         for method in sorted((getattr(route, "methods", None) or set()) - {"HEAD", "OPTIONS"}):
@@ -226,7 +241,7 @@ def test_no_route_under_api_is_mounted_without_the_membership_check():
 
     unprotected = []
     for route in app.routes:
-        if isinstance(route, APIRoute) and route.path.startswith("/api/") and route.path != "/api/me":
+        if isinstance(route, APIRoute) and route.path.startswith("/api/") and route.path not in SIGNED_IN_ONLY:
             uses = any(d.call is current_member for d in route.dependant.dependencies)
             if not uses:
                 unprotected.append(route.path)

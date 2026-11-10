@@ -5,6 +5,7 @@ import { AuthLayout } from '@/components/auth/AuthLayout';
 import { Input, Button } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { takeCallbackNotice } from '@/lib/authNotice';
+import { hasPendingInvite } from '@/lib/pendingInvite';
 import { AuthError } from '@/services/auth.service';
 
 export function LoginPage() {
@@ -34,7 +35,8 @@ const handleSubmit = async (
   try {
     await login(email, password);
 
-    navigate("/");
+    // An invitation link was opened before signing in: go back and accept it.
+    navigate(hasPendingInvite() ? "/accept-invite" : "/");
   } catch (err) {
     // Signed up but never confirmed the email: take them to the page where they can ask for a new link.
     if (err instanceof AuthError && err.code === "email_not_confirmed") {
@@ -57,6 +59,12 @@ const handleSubmit = async (
         <h1 className="text-xl font-semibold text-white">Welcome back</h1>
         <p className="mt-1 text-sm text-ink-400">Sign in to your Johnson Road account.</p>
       </div>
+
+      {hasPendingInvite() && !error && !accountError && (
+        <div className="mb-4 rounded-lg border border-white/[0.06] bg-ink-900/40 px-3 py-2.5 text-sm text-ink-200">
+          Sign in (or create an account) with the email address your invitation was sent to, then accept it.
+        </div>
+      )}
 
       {(error || accountError) && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-err-500/20 bg-err-500/[0.06] px-3 py-2.5 text-sm text-err-400">

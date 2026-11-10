@@ -5,6 +5,7 @@ import { AuthLayout } from '@/components/auth/AuthLayout';
 import { Button, Input } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { takeCallbackNotice } from '@/lib/authNotice';
+import { hasPendingInvite } from '@/lib/pendingInvite';
 import { AuthService } from '@/services/auth.service';
 
 const RESEND_WAIT_SECONDS = 60;
@@ -114,6 +115,11 @@ export function VerifyEmailPage() {
           )}{' '}
           Click the link in the email to continue setting up your account.
         </p>
+        {hasPendingInvite() && (
+          <p className="mt-2 text-xs text-ink-400">
+            After you confirm, open your invitation link again to join the organization that invited you.
+          </p>
+        )}
 
         {error && (
           <div className="mt-4 flex items-center gap-2 rounded-lg border border-err-500/20 bg-err-500/[0.06] px-3 py-2.5 text-left text-sm text-err-400">

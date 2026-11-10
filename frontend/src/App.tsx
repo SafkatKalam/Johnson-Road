@@ -4,10 +4,13 @@ import { Layout } from '@/components/layout/Layout';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { SkeletonCard } from '@/components/ui';
+import { PreferencesProvider } from '@/components/shared/PreferencesProvider';
+import { hasPendingInvite } from '@/lib/pendingInvite';
 
 const LoginPage = lazy(() => import('@/pages/auth/LoginPage').then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import('@/pages/auth/RegisterPage').then((m) => ({ default: m.RegisterPage })));
 const ForgotPasswordPage = lazy(() => import('@/pages/auth/ForgotPasswordPage').then((m) => ({ default: m.ForgotPasswordPage })));
+const AcceptInvitePage = lazy(() => import('@/pages/auth/AcceptInvitePage').then((m) => ({ default: m.AcceptInvitePage })));
 const ResetPasswordPage = lazy(() => import('@/pages/auth/ResetPasswordPage').then((m) => ({ default: m.ResetPasswordPage })));
 const VerifyEmailPage = lazy(() => import('@/pages/auth/VerifyEmailPage').then((m) => ({ default: m.VerifyEmailPage })));
 const OnboardingPage = lazy(() => import('@/pages/auth/OnboardingPage').then((m) => ({ default: m.OnboardingPage })));
@@ -64,6 +67,8 @@ function AuthRoute({ children }: { children: ReactNode }) {
   const { user, loading, needsOnboarding } = useAuth();
 
   if (loading) return <AuthFallback />;
+  // Someone who opened an invitation link before signing in goes back to it, whatever their organisation state.
+  if (user && hasPendingInvite()) return <Navigate to="/accept-invite" replace />;
   if (user && !needsOnboarding) return <Navigate to="/" replace />;
   if (user && needsOnboarding) {
     // Only redirect to onboarding from login/register — verify-email stays
@@ -80,6 +85,7 @@ function AppRoutes() {
       <Route path="/login" element={<Suspense fallback={<AuthFallback />}><AuthRoute><LoginPage /></AuthRoute></Suspense>} />
       <Route path="/register" element={<Suspense fallback={<AuthFallback />}><AuthRoute><RegisterPage /></AuthRoute></Suspense>} />
       <Route path="/forgot-password" element={<Suspense fallback={<AuthFallback />}><ForgotPasswordPage /></Suspense>} />
+      <Route path="/accept-invite" element={<Suspense fallback={<AuthFallback />}><AcceptInvitePage /></Suspense>} />
       <Route path="/reset-password" element={<Suspense fallback={<AuthFallback />}><ResetPasswordPage /></Suspense>} />
       <Route path="/verify-email" element={<Suspense fallback={<AuthFallback />}><VerifyEmailPage /></Suspense>} />
       <Route path="/onboarding" element={<Suspense fallback={<AuthFallback />}><SignedInRoute><OnboardingPage /></SignedInRoute></Suspense>} />
@@ -106,9 +112,11 @@ function AppRoutes() {
 function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
+      <PreferencesProvider>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </PreferencesProvider>
     </BrowserRouter>
   );
 }

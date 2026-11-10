@@ -86,6 +86,25 @@ def as_member():
 
 
 @pytest.fixture()
+def confirmed_email():
+    """Replaces the call that asks Supabase whether an address was confirmed. `state['answer']` is True, False,
+    None (cannot check) or an exception to raise; `state['calls']` lists the sign-in ids that were asked about."""
+    from app.auth.email_confirmation import get_email_confirmation_check
+
+    state = {"answer": True, "calls": []}
+
+    def check(subject, email=None):
+        state["calls"].append(subject)
+        if isinstance(state["answer"], Exception):
+            raise state["answer"]
+        return state["answer"]
+
+    app.dependency_overrides[get_email_confirmation_check] = lambda: check
+    yield state
+    app.dependency_overrides.pop(get_email_confirmation_check, None)
+
+
+@pytest.fixture()
 def verifier(monkeypatch):
     """A token verifier trusting the local test key. Returns the FakeJWKS so a test can change the keys."""
     from app.auth import tokens
