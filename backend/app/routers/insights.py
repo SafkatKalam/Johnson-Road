@@ -18,6 +18,7 @@ from app.auth.deps import Principal, current_member
 from app.core.errors import AppError
 from app.database.database import get_db
 from app.repositories import audit_repository, notification_repository, report_db_repository as reports
+from app.reports_pdf import build_report_pdf
 from app.storage import StorageKeyError, StorageUnavailable, make_key, storage
 
 router = APIRouter(tags=["insights"])
@@ -124,7 +125,7 @@ def read_report(report_id: UUID, who: Principal = Depends(current_member), db: S
 
 def _cell(v: Any) -> Any:
     """Stop a spreadsheet from running a cell as a formula (CSV injection)."""
-    if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+    if isinstance(v, str) and (v[:1] in ("\t", "\r") or v.lstrip()[:1] in ("=", "+", "-", "@", "＝", "＋", "－", "＠")):
         return "'" + v
     return v
 
@@ -149,32 +150,37 @@ def _build_csv(rep: dict[str, Any]) -> bytes:
     return ("﻿" + buf.getvalue()).encode("utf-8")   # BOM so Excel reads UTF-8 names correctly
 
 
-@router.get("/reports/{report_id}/export.csv", summary="Download the report as CSV (made once, then reused)")
-def export_csv(report_id: UUID, who: Principal = Depends(current_member), db: Session = Depends(get_db)):
+def _export(report_id: UUID, fmt: str, who: Principal, db: Session) -> Response:
+    """Build the file once, store it in the outputs area, reuse it afterwards (the numbers never change)."""
     rep = reports.get(db, who.organization_id, report_id)
     try:
-        existing = reports.stored_file(db, report_id, "csv")
+        existing = reports.stored_file(db, report_id, fmt)
         if existing and storage.exists("outputs", existing["storage_key"]):
             with storage.open_read("outputs", existing["storage_key"]) as fh:
                 data = fh.read()
         else:
-            data = _build_csv(rep)
-            key = make_key(who.organization_id, rep["project_id"], "csv")
+            data = _build_csv(rep) if fmt == "csv" else build_report_pdf(rep, reports.analysis_version(rep))
+            key = make_key(who.organization_id, rep["project_id"], fmt)
             size, digest = storage.write_stream("outputs", key, iter([data]), max_bytes=50 * 1024 * 1024)
-            if not reports.save_file(db, report_id=report_id, fmt="csv", storage_key=key, size=size, checksum=digest,
+            if not reports.save_file(db, report_id=report_id, fmt=fmt, storage_key=key, size=size, checksum=digest,
                                      version=reports.analysis_version(rep)):
                 storage.delete("outputs", key)   # another request saved one first; theirs is identical
     except (StorageUnavailable, StorageKeyError):
         raise AppError("storage_unavailable", 503, "Storage is not available right now. Please try again.")
-    name = f"report-{str(report_id)[:8]}-v{rep['version']}.csv"
-    return Response(content=data, media_type="text/csv; charset=utf-8",
+    name = f"report-{str(report_id)[:8]}-v{rep['version']}.{fmt}"
+    media = "text/csv; charset=utf-8" if fmt == "csv" else "application/pdf"
+    return Response(content=data, media_type=media,
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "X-Content-Type-Options": "nosniff", "Cache-Control": "private"})
 
 
-@router.get("/reports/{report_id}/export.pdf", summary="PDF export (not available yet)")
+@router.get("/reports/{report_id}/export.csv", summary="Download the report as CSV (made once, then reused)")
+def export_csv(report_id: UUID, who: Principal = Depends(current_member), db: Session = Depends(get_db)):
+    return _export(report_id, "csv", who, db)
+
+
+@router.get("/reports/{report_id}/export.pdf", summary="Download the report as PDF (made once, then reused)")
 def export_pdf(report_id: UUID, who: Principal = Depends(current_member), db: Session = Depends(get_db)):
-    reports.get(db, who.organization_id, report_id)
-    raise AppError("pdf_not_available", 501, "PDF export is not available yet. Use the CSV export.")
+    return _export(report_id, "pdf", who, db)
 
 
 # --- F39 notifications --------------------------------------------------------------

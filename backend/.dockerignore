@@ -1,0 +1,17 @@
+# Never put secrets, local data, environments or model weights into the image.
+.env
+.env.*
+!.env.example
+.venv/
+.venv-win/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+uploads/
+tests/
+tools/
+*.pt
+*.mp4
+*.avi
+*.mkv

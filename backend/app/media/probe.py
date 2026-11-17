@@ -55,6 +55,9 @@ def probe(path: Path, *, max_duration_seconds: float, max_pixels: int) -> Measur
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
         fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
         count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        # Refuse a huge claimed picture BEFORE decoding a frame, so a hostile header cannot force a huge allocation.
+        if width * height > max_pixels or width > 16384 or height > 16384:
+            raise ProbeError(TOO_LARGE_FRAME)
         ok, frame = cap.read()
         if not ok or frame is None:
             raise ProbeError(UNREADABLE if count > 0 else EMPTY)
@@ -81,3 +84,58 @@ def probe(path: Path, *, max_duration_seconds: float, max_pixels: int) -> Measur
         raise ProbeError(UNREADABLE) from exc
     finally:
         cap.release()
+
+
+# --- isolated probing (security review 2026-11-17, finding 4) -------------------------------------------------------
+# The decoder is native code: a hostile file could crash it or eat memory. probe_isolated() runs probe() in a separate
+# Python process with a wall-clock limit, so a crash or hang fails THAT upload with "unreadable_video" and never takes
+# the API process down. On Linux a memory ceiling is also set (resource.RLIMIT_AS); Windows has no equivalent here.
+
+PROBE_TIMEOUT_SECONDS = 60
+PROBE_MEMORY_BYTES = 4 * 1024**3
+
+
+def _child(path: str, max_duration: float, max_pixels: int, queue) -> None:  # runs in the child process
+    try:
+        import resource  # Linux/macOS only
+
+        resource.setrlimit(resource.RLIMIT_AS, (PROBE_MEMORY_BYTES, PROBE_MEMORY_BYTES))
+    except Exception:  # noqa: BLE001 - not available on Windows
+        pass
+    try:
+        m = probe(Path(path), max_duration_seconds=max_duration, max_pixels=max_pixels)
+        queue.put(("ok", (m.duration_seconds, m.width_px, m.height_px, m.frame_rate, m.frame_count, m.preview_jpeg)))
+    except ProbeError as exc:
+        queue.put(("error", exc.code))
+    except BaseException:  # noqa: BLE001
+        queue.put(("error", UNREADABLE))
+
+
+def probe_isolated(path: Path, *, max_duration_seconds: float, max_pixels: int, timeout: float = PROBE_TIMEOUT_SECONDS) -> Measured:
+    import multiprocessing as mp
+    import queue as queue_mod
+
+    ctx = mp.get_context("spawn")
+    q = ctx.Queue(maxsize=1)
+    proc = ctx.Process(target=_child, args=(str(path), max_duration_seconds, max_pixels, q), daemon=True)
+    proc.start()
+    import time
+
+    deadline = time.monotonic() + timeout
+    kind, payload = "error", UNREADABLE   # hung, crashed or killed: treat the file as unreadable
+    try:
+        while time.monotonic() < deadline:
+            try:
+                kind, payload = q.get(timeout=0.25)
+                break
+            except queue_mod.Empty:
+                if not proc.is_alive() and q.empty():
+                    break   # the child died without answering (native crash)
+    finally:
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=5)
+    if kind != "ok":
+        raise ProbeError(payload)
+    return Measured(*payload)

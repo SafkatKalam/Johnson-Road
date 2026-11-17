@@ -36,11 +36,22 @@ class Settings(BaseSettings):
     upload_max_bytes: int = 2 * 1024**3
     upload_max_duration_seconds: int = 4 * 3600
     upload_max_pixels: int = 7680 * 4320
+    # Per-organisation limits (security review 2026-11-17). Proposals until the client agrees plan limits (O39).
+    org_max_active_jobs: int = 10                 # queued + running at once
+    org_max_storage_bytes: int | None = None      # total stored video; None = no quota decided yet
+    report_max_versions: int = 20                 # versions of one report (same job, type and options)
+    job_timeout_seconds: int | None = None        # O46 has no agreed default: None = no time limit
     s3_endpoint: str = "http://127.0.0.1:9110"
     s3_region: str = "us-east-1"
     s3_bucket: str = "johnson-road-media"
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
+
+    @field_validator("org_max_storage_bytes", "job_timeout_seconds", mode="before")
+    @classmethod
+    def empty_means_unset(cls, value):
+        # "ORG_MAX_STORAGE_BYTES=" in .env means "no limit", not an error.
+        return None if isinstance(value, str) and value.strip() == "" else value
 
     @field_validator("database_url")
     @classmethod

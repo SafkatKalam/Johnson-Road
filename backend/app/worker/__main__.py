@@ -9,7 +9,9 @@ from app.worker.service import Worker
 
 def main() -> None:
     configure_logging()
-    worker = Worker(SessionLocal, storage)
+    from app.core.config import settings
+
+    worker = Worker(SessionLocal, storage, timeout_seconds=settings.job_timeout_seconds)   # JOB_TIMEOUT_SECONDS in .env; unset = no limit (O46)
     logging.getLogger("johnsonroad.worker").info("worker.started", extra={"worker_id": worker.worker_id})
     try:
         worker.run_forever()

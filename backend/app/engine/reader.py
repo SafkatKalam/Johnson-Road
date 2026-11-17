@@ -42,6 +42,9 @@ def read_batches(path: Path, *, fps: float, expected_frames: int, frame_skip: in
             if not ok:
                 break
             read_any = True
+            if expected_frames > 0 and index > expected_frames + max(2, int(expected_frames * EOF_TOLERANCE)):
+                # Far more frames than the header said (and than the duration check allowed): stop, do not run unbounded.
+                raise ReaderError("frame_count_mismatch")
             if index % frame_skip == 0:
                 batch.append(Frame(index, index / fps, image))
                 if len(batch) >= batch_size:

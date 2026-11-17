@@ -1,577 +1,181 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useEffect, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
+import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Car, Cpu, FileBarChart, Film, UploadCloud, FolderKanban, AlertCircle, Loader2, ArrowRight, LayoutGrid } from 'lucide-react';
+import { Card, CardHeader, Button, Badge, Select } from '@/components/ui';
+import { useAuth } from '@/lib/auth';
 import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import {
-  Car,
-  Cpu,
-  FileBarChart,
-  Gauge,
-  TrendingUp,
-  Truck,
-  CheckCircle2,
-  ArrowRight,
-  UploadCloud,
-  FolderKanban,
-  FileText,
-  Activity,
-  Clock,
-  Lightbulb,
-  X,
-  MapPin,
-  Zap,
-  AlertTriangle,
-  Info,
-} from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { KpiCard } from '@/components/shared/KpiCard';
-import { ProjectCard } from '@/components/shared/ProjectCard';
-import { Card, CardHeader, Button, ProgressBar, Timeline, Badge, Modal } from '@/components/ui';
-import {
-  dashboardKpis,
-  trafficVolumeByHour,
-  vehicleClassBreakdown,
-  aiInsights,
-  aiTimeline,
-  recentActivity,
-  quickActions,
-  trafficByProject,
-  segmentDetails,
-  insightDetails,
-} from '@/services/dashboard.service';
-import { projects, type ProjectStatus } from '@/services/project.service';
-import { processingJobs } from '@/services/processing.service';
-import { statusTone, statusLabel } from '@/lib/helpers';
-import { formatCompact, formatNumber } from '@/lib/utils';
+  VideoSetupService,
+  describeSetupError,
+  type AnalyticsSummary,
+  type JobItem,
+  type ProjectItem,
+  type ReportItem,
+} from '@/services/videoSetup.service';
+import { formatNumber, formatRelative } from '@/lib/utils';
 
-const iconMap = { upload: UploadCloud, file: FileText, folder: FolderKanban, cpu: Cpu };
-const insightIcon = { trending: TrendingUp, truck: Truck, check: CheckCircle2 };
-const insightTone = { info: 'sky', warn: 'amber', success: 'brand' } as const;
-
-type TrafficView = 'aggregate' | 'project' | 'live' | 'class';
+const POLL_MS = 15000;
+const jobTone = (s: string) => (s === 'completed' ? 'brand' : s === 'failed' ? 'rose' : s === 'running' ? 'sky' : s === 'queued' ? 'amber' : 'slate') as 'brand' | 'rose' | 'sky' | 'amber' | 'slate';
 
 export function DashboardPage() {
   const navigate = useNavigate();
-  const recentProjects = projects.filter((p) => p.status !== 'failed').slice(0, 4);
-  const activeJob = processingJobs.find((j) => j.status === 'processing');
+  const { profile } = useAuth();
+  const [projectId, setProjectId] = useState('');
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
+  const [jobs, setJobs] = useState<JobItem[]>([]);
+  const [reports, setReports] = useState<ReportItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
 
-  const [trafficView, setTrafficView] = useState<TrafficView>('aggregate');
-  const [selectedProjectId, setSelectedProjectId] = useState('prj_1c9b');
-  const [segmentModal, setSegmentModal] = useState<string | null>(null);
-  const [expandedInsight, setExpandedInsight] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const pid = projectId || undefined;
+      const [p, s, j, r] = await Promise.all([
+        VideoSetupService.listProjects({ limit: 100 }),
+        VideoSetupService.analyticsSummary({ projectId: pid }),
+        VideoSetupService.listJobs({ projectId: pid, limit: 6 }),
+        VideoSetupService.listReports({ projectId: pid, limit: 5 }),
+      ]);
+      setProjects(p.items);
+      setSummary(s);
+      setJobs(j.items);
+      setReports(r.items);
+      setError('');
+    } catch (e) {
+      setError(describeSetupError(e));
+    } finally {
+      setLoaded(true);
+    }
+  }, [projectId]);
 
-  const trafficData =
-    trafficView === 'project'
-      ? trafficByProject[selectedProjectId] ?? trafficVolumeByHour
-      : trafficVolumeByHour;
+  useEffect(() => { load(); }, [load]);
+  const active = jobs.some((j) => j.status === 'queued' || j.status === 'running');
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(load, POLL_MS);
+    return () => clearInterval(t);
+  }, [active, load]);
 
-  const trafficProject = projects.find((p) => p.id === selectedProjectId);
+  const running = summary?.jobsByStatus.running ?? 0;
+  const queued = summary?.jobsByStatus.queued ?? 0;
+  const lineTotal = summary?.lineCrossing.total ?? 0;
+  const zoneTotal = summary?.zonePresence.total ?? 0;
+  const classData = Object.entries(summary?.lineCrossing.byClass ?? {}).map(([k, v]) => ({ name: k, count: v })).sort((a, b) => b.count - a.count);
+  const firstName = profile?.full_name?.split(' ')[0];
 
-  const viewTabs: { key: TrafficView; label: string }[] = [
-    { key: 'aggregate', label: 'Aggregate' },
-    { key: 'project', label: 'Project' },
-    { key: 'live', label: 'Live' },
-    { key: 'class', label: 'Vehicle Class' },
-  ];
-
-  const segmentDetail = segmentModal ? segmentDetails[segmentModal] : null;
+  if (!loaded) {
+    return <div className="flex items-center gap-2 py-20 text-sm text-ink-400"><Loader2 size={15} className="animate-spin" /> Loading dashboard…</div>;
+  }
 
   return (
     <div className="space-y-6">
-      {/* Welcome header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-white">Welcome back, Shadiatun</h2>
+          <h2 className="text-lg font-semibold text-white">{firstName ? `Welcome back, ${firstName}` : 'Dashboard'}</h2>
           <p className="mt-1 text-sm text-ink-400">
-            {activeJob
-              ? `${activeJob.projectName} is ${activeJob.progress}% through analysis.`
-              : 'No active processing jobs right now.'}
+            {summary?.lastCompletedAt ? `Last analysis finished ${formatRelative(summary.lastCompletedAt)}.` : 'No analysis has finished yet.'} Counts are estimates.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" leftIcon={<Activity size={15} />}>
-            System healthy
-          </Button>
-          <Link to="/upload">
-            <Button size="sm" leftIcon={<UploadCloud size={15} />}>
-              Upload footage
-            </Button>
-          </Link>
+          <Select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="w-auto" aria-label="Filter by project">
+            <option value="">All projects</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </Select>
+          <Button leftIcon={<UploadCloud size={15} />} onClick={() => navigate('/upload')}>Upload video</Button>
         </div>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard
-          label="Total vehicles detected"
-          value={formatCompact(dashboardKpis.totalVehicles)}
-          delta={dashboardKpis.totalVehiclesDelta}
-          icon={Car}
-          iconTone="brand"
-          index={0}
-          sparkline={[3, 5, 4, 7, 6, 9, 8, 11, 10, 14]}
-          tooltip="387,490 vehicles detected across 6 projects"
-        />
-        <KpiCard
-          label="Active processing jobs"
-          value={String(dashboardKpis.activeJobs)}
-          icon={Cpu}
-          iconTone="sky"
-          index={1}
-          sparkline={[0, 1, 2, 1, 3, 2, 1, 2, 1, 1]}
-          tooltip="1 job running on NVIDIA A100 GPU"
-        />
-        <KpiCard
-          label="Completed reports"
-          value={String(dashboardKpis.completedReports)}
-          delta={dashboardKpis.completedReportsDelta}
-          icon={FileBarChart}
-          iconTone="violet"
-          index={2}
-          sparkline={[2, 3, 4, 5, 6, 8, 9, 11, 12, 14]}
-          tooltip="14 reports generated this month"
-        />
-        <KpiCard
-          label="Hours of footage analyzed"
-          value={`${dashboardKpis.hoursAnalyzed}h`}
-          delta={dashboardKpis.hoursAnalyzedDelta}
-          icon={Gauge}
-          iconTone="amber"
-          index={3}
-          sparkline={[4, 6, 8, 10, 13, 16, 20, 24, 28, 32]}
-          tooltip="158 hours of CCTV footage processed"
-        />
+      {error && (
+        <div role="alert" className="flex items-center gap-2 rounded-lg border border-err-500/20 bg-err-500/[0.06] px-3 py-2.5 text-sm text-err-400">
+          <AlertCircle size={15} /> {error}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Kpi icon={Car} label="Line-crossing count" value={formatNumber(lineTotal)} hint="estimate" />
+        <Kpi icon={LayoutGrid} label="Zone-presence count" value={formatNumber(zoneTotal)} hint="estimate" />
+        <Kpi icon={Film} label="Videos analysed" value={String(summary?.videosAnalysed ?? 0)} />
+        <Kpi icon={Cpu} label="Jobs running / queued" value={`${running} / ${queued}`} />
       </div>
 
-      {/* Main grid */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Traffic volume chart with switcher */}
-        <Card className="lg:col-span-2" padding="md">
-          <CardHeader
-            title="Traffic volume"
-            subtitle={
-              trafficView === 'project' && trafficProject
-                ? trafficProject.name
-                : trafficView === 'live'
-                  ? 'Live data — updating every 5s'
-                  : trafficView === 'class'
-                    ? 'By vehicle class'
-                    : 'Aggregate vehicle count across all active roads'
-            }
-            icon={<TrendingUp size={16} />}
-            action={
-              <div className="flex items-center gap-1 rounded-lg border border-white/[0.06] bg-ink-900/40 p-0.5">
-                {viewTabs.map((tab) => (
-                  <button
-                    key={tab.key}
-                    onClick={() => setTrafficView(tab.key)}
-                    className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
-                      trafficView === tab.key ? 'bg-white/[0.08] text-white' : 'text-ink-400 hover:text-white'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            }
-          />
-          {/* Project selector when in project view */}
-          {trafficView === 'project' && (
-            <div className="mt-3 flex items-center gap-2">
-              <MapPin size={13} className="text-ink-400" />
-              <select
-                value={selectedProjectId}
-                onChange={(e) => setSelectedProjectId(e.target.value)}
-                className="h-8 rounded-lg border border-white/[0.08] bg-ink-900/60 px-3 text-xs text-ink-50 focus:border-brand-500/50 focus:outline-none"
-              >
-                {projects.filter((p) => p.status === 'completed' || p.status === 'processing').map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          <div className="mt-5 h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              {trafficView === 'class' ? (
-                <BarChart data={vehicleClassBreakdown} margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
-                  <XAxis dataKey="name" tick={{ fill: '#5d6781', fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#5d6781', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => formatCompact(v)} />
-                  <Tooltip content={<ChartTooltip valueFormatter={(v) => formatNumber(v)} />} />
-                  <Bar dataKey="value" radius={[3, 3, 0, 0]} maxBarSize={40}>
-                    {vehicleClassBreakdown.map((e) => <Cell key={e.name} fill={e.color} />)}
-                  </Bar>
-                </BarChart>
-              ) : (
-                <AreaChart data={trafficData} margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="trafficGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={trafficView === 'live' ? '#38bdf8' : '#10b981'} stopOpacity={0.35} />
-                      <stop offset="100%" stopColor={trafficView === 'live' ? '#38bdf8' : '#10b981'} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="hour" tick={{ fill: '#5d6781', fontSize: 11 }} axisLine={false} tickLine={false} interval={2} />
-                  <YAxis tick={{ fill: '#5d6781', fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => formatCompact(v)} />
-                  <Tooltip content={<ChartTooltip valueFormatter={(v) => `${formatNumber(v)} vehicles`} />} />
-                  <Area
-                    type="monotone"
-                    dataKey="vehicles"
-                    stroke={trafficView === 'live' ? '#38bdf8' : '#10b981'}
-                    strokeWidth={2}
-                    fill="url(#trafficGrad)"
-                    dot={false}
-                    activeDot={{ r: 4, fill: trafficView === 'live' ? '#38bdf8' : '#10b981', stroke: '#0b0d13', strokeWidth: 2 }}
-                  />
-                </AreaChart>
-              )}
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        {/* Vehicle class breakdown */}
-        <Card padding="md">
-          <CardHeader
-            title="Vehicle classification"
-            subtitle="Distribution by class"
-            icon={<Car size={16} />}
-          />
-          <div className="mt-4 h-44">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={vehicleClassBreakdown}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={48}
-                  outerRadius={68}
-                  paddingAngle={3}
-                  stroke="none"
-                >
-                  {vehicleClassBreakdown.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip content={<ChartTooltip valueFormatter={(v) => formatNumber(v)} />} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="mt-4 space-y-2">
-            {vehicleClassBreakdown.map((v) => (
-              <div key={v.name} className="flex items-center justify-between text-xs">
-                <span className="flex items-center gap-2 text-ink-300">
-                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: v.color }} />
-                  {v.name}
-                </span>
-                <span className="font-medium text-ink-100">{formatCompact(v.value)}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* Active jobs + AI timeline */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2" padding="md">
-          <CardHeader
-            title="Active processing jobs"
-            subtitle="Live AI analysis pipeline"
-            icon={<Cpu size={16} />}
-            action={
-              <Link to="/job-queue" className="text-xs font-medium text-brand-300 hover:text-brand-200">
-                View all
-              </Link>
-            }
-          />
-          <div className="mt-4 space-y-3">
-            {processingJobs.map((job) => (
-              <div
-                key={job.id}
-                onClick={() => navigate('/processing')}
-                className="cursor-pointer rounded-xl border border-white/[0.05] bg-ink-900/40 p-4 transition-colors hover:border-white/10 hover:bg-ink-900/60"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-ink-100">{job.projectName}</p>
-                    <p className="mt-0.5 text-xs text-ink-400">
-                      {job.stage} · {job.status === 'processing' ? `${job.fps} FPS · ETA ${job.eta}` : job.eta}
-                    </p>
-                  </div>
-                  <Badge tone={job.status === 'processing' ? 'sky' : job.status === 'completed' ? 'brand' : 'amber'} dot={job.status === 'processing'} pulse={job.status === 'processing'}>
-                    {job.status === 'processing' ? `${job.progress}%` : job.status}
-                  </Badge>
-                </div>
-                {job.status === 'processing' && (
-                  <div className="mt-3">
-                    <ProgressBar value={job.progress} size="sm" tone="sky" />
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        {/* AI timeline - clickable segments */}
-        <Card padding="md">
-          <CardHeader
-            title="AI processing timeline"
-            subtitle="Click a segment for details"
-            icon={<Activity size={16} />}
-          />
-          <div className="mt-5">
-            <Timeline
-              items={aiTimeline.map((t) => ({
-                id: t.id,
-                label: t.label,
-                meta: t.time,
-                status: t.status,
-              }))}
-            />
-          </div>
-          <div className="mt-4 border-t border-white/[0.06] pt-4">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-ink-500">Video Segments</p>
-            <div className="space-y-1.5">
-              {[
-                { id: '1', range: '00:00 — 06:00', status: 'completed' },
-                { id: '2', range: '06:00 — 12:00', status: 'completed' },
-                { id: '3', range: '12:00 — 18:00', status: 'active' },
-                { id: '4', range: '18:00 — 24:00', status: 'pending' },
-              ].map((seg) => (
-                <button
-                  key={seg.id}
-                  onClick={() => setSegmentModal(seg.id)}
-                  className="flex w-full items-center justify-between rounded-lg border border-white/[0.05] bg-ink-900/40 px-3 py-2 text-left transition-colors hover:border-white/10 hover:bg-ink-900/60"
-                >
-                  <span className="font-mono text-xs text-ink-200">{seg.range}</span>
-                  <div className="flex items-center gap-2">
-                    {seg.status === 'completed' ? (
-                      <CheckCircle2 size={13} className="text-brand-400" />
-                    ) : seg.status === 'active' ? (
-                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent-400" />
-                    ) : (
-                      <Clock size={12} className="text-ink-500" />
-                    )}
-                    <ArrowRight size={12} className="text-ink-500" />
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Recent projects + AI insights */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2" padding="md">
-          <CardHeader
-            title="Recent projects"
-            subtitle="Click a project to view details"
-            icon={<FolderKanban size={16} />}
-            action={
-              <Link to="/projects" className="text-xs font-medium text-brand-300 hover:text-brand-200">
-                View all
-              </Link>
-            }
-          />
-          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {recentProjects.map((p) => (
-              <div key={p.id} onClick={() => navigate(`/projects/${p.id}`)}>
-                <ProjectCard project={p} compact />
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        {/* AI insights - clickable with expanded panel */}
-        <Card padding="md">
-          <CardHeader
-            title="AI insights"
-            subtitle="Click to expand analysis"
-            icon={<Lightbulb size={16} />}
-            action={<Badge tone="brand">Auto</Badge>}
-          />
-          <div className="mt-4 space-y-3">
-            {aiInsights.map((insight) => {
-              const Icon = insightIcon[insight.icon as keyof typeof insightIcon];
-              const tone = insightTone[insight.severity];
-              const isExpanded = expandedInsight === insight.id;
-              const detail = insightDetails[insight.id];
-              return (
-                <motion.div
-                  key={insight.id}
-                  className="cursor-pointer rounded-xl border border-white/[0.05] bg-ink-900/40 p-4"
-                  whileHover={{ borderColor: 'rgba(255,255,255,0.1)' }}
-                  onClick={() => setExpandedInsight(isExpanded ? null : insight.id)}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${
-                      tone === 'brand' ? 'bg-brand-500/12 text-brand-300 ring-brand-500/20' :
-                      tone === 'sky' ? 'bg-accent-500/12 text-accent-400 ring-accent-500/20' :
-                      'bg-warn-500/12 text-warn-400 ring-warn-500/20'
-                    }`}>
-                      <Icon size={15} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-medium text-ink-100">{insight.title}</p>
-                        {isExpanded ? <X size={13} className="shrink-0 text-ink-400" /> : <ArrowRight size={13} className="shrink-0 text-ink-400" />}
-                      </div>
-                      <p className="mt-1 text-xs leading-relaxed text-ink-400">{insight.detail}</p>
-
-                      <AnimatePresence>
-                        {isExpanded && detail && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.2 }}
-                            className="mt-3 space-y-3 overflow-hidden border-t border-white/[0.06] pt-3"
-                          >
-                            <InsightSection icon={<TrendingUp size={12} />} label="Trend" text={detail.trend} tone="text-brand-300" />
-                            <InsightSection icon={<Info size={12} />} label="Reason" text={detail.reason} tone="text-accent-400" />
-                            <InsightSection icon={<Zap size={12} />} label="Recommendation" text={detail.recommendation} tone="text-warn-400" />
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        </Card>
-      </div>
-
-      {/* Quick actions + recent activity */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card padding="md">
-          <CardHeader title="Quick actions" icon={<ArrowRight size={16} />} />
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            {quickActions.map((action) => {
-              const Icon = iconMap[action.icon as keyof typeof iconMap];
-              return (
-                <Link key={action.id} to={action.to}>
-                  <motion.div
-                    className="surface surface-hover flex flex-col items-start gap-2 p-4"
-                    whileHover={{ y: -2 }}
-                    transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                  >
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/[0.04] text-brand-300 ring-1 ring-white/[0.06]">
-                      <Icon size={16} />
-                    </div>
-                    <span className="text-xs font-medium text-ink-100">{action.label}</span>
-                  </motion.div>
-                </Link>
-              );
-            })}
-          </div>
-        </Card>
-
-        <Card className="lg:col-span-2" padding="md">
-          <CardHeader title="Recent activity" subtitle="Across all projects" icon={<Clock size={16} />} />
-          <div className="mt-4 divide-y divide-white/[0.04]">
-            {recentActivity.map((act) => {
-              const tone = statusTone(act.status);
-              return (
-                <div
-                  key={act.id}
-                  onClick={() => act.projectId && navigate(`/projects/${act.projectId}`)}
-                  className="flex cursor-pointer items-center gap-3 py-3 transition-colors hover:bg-white/[0.02]"
-                >
-                  <Badge tone={tone} dot={act.status === 'processing'}>
-                    {statusLabel(act.status)}
-                  </Badge>
-                  <div className="min-w-0 flex-1">
-                    <span className="text-sm text-ink-100">{act.projectName}</span>
-                    <span className="text-sm text-ink-400"> — {act.action}</span>
-                  </div>
-                  <span className="shrink-0 text-xs text-ink-400">{act.time}</span>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      </div>
-
-      {/* Segment detail modal */}
-      <Modal
-        open={!!segmentModal}
-        onClose={() => setSegmentModal(null)}
-        title={segmentDetail ? `Segment ${segmentDetail.id} — ${segmentDetail.range}` : ''}
-        description="Detailed analysis for this time segment"
-        size="md"
-      >
-        {segmentDetail && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
-              <SegmentStat label="Vehicle Count" value={formatNumber(segmentDetail.vehicleCount)} />
-              <SegmentStat label="Avg Speed" value={`${segmentDetail.avgSpeed} km/h`} />
-              <SegmentStat label="Peak Density" value={`${segmentDetail.peakDensity} veh/min`} />
-            </div>
+      {projects.length === 0 && !projectId ? (
+        <Card padding="lg">
+          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-400">Events</p>
-              <div className="space-y-2">
-                {segmentDetail.events.map((event, i) => (
-                  <div key={i} className="flex items-start gap-2 rounded-lg border border-white/[0.05] bg-ink-900/40 p-3 text-sm text-ink-300">
-                    <AlertTriangle size={14} className="mt-0.5 shrink-0 text-warn-400" />
-                    {event}
-                  </div>
-                ))}
-              </div>
+              <p className="text-sm font-medium text-white">Start your first analysis</p>
+              <p className="mt-1 text-xs text-ink-400">Create a project, upload one CCTV video, draw a counting line, and queue it.</p>
             </div>
+            <Button leftIcon={<FolderKanban size={15} />} onClick={() => navigate('/upload')}>Get started</Button>
           </div>
-        )}
-      </Modal>
-    </div>
-  );
-}
+        </Card>
+      ) : null}
 
-function InsightSection({ icon, label, text, tone }: { icon: React.ReactNode; label: string; text: string; tone: string }) {
-  return (
-    <div>
-      <div className={`flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider ${tone}`}>
-        {icon} {label}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Card padding="lg" className="lg:col-span-2">
+          <CardHeader title="Vehicles by class" subtitle={summary?.videosAnalysed ? `Line crossings, latest completed job of each video` : 'Appears after the first completed analysis'} />
+          <div className="mt-4 h-60">
+            {classData.length === 0 ? (
+              <p className="text-sm text-ink-400">Nothing counted yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={classData}>
+                  <XAxis dataKey="name" tick={{ fill: '#8b93a7', fontSize: 11 }} />
+                  <YAxis allowDecimals={false} tick={{ fill: '#8b93a7', fontSize: 11 }} />
+                  <Tooltip contentStyle={{ background: '#11141c', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8 }} />
+                  <Bar dataKey="count" name="Vehicles" fill="#10b981" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </Card>
+
+        <Card padding="none">
+          <div className="flex items-center justify-between px-5 pt-5">
+            <p className="text-sm font-semibold text-white">Recent jobs</p>
+            <Link to="/job-queue" className="flex items-center gap-1 text-xs text-brand-300 hover:text-brand-200">All <ArrowRight size={12} /></Link>
+          </div>
+          <div className="mt-3 divide-y divide-white/[0.04]">
+            {jobs.length === 0 ? <p className="px-5 pb-5 text-xs text-ink-400">No jobs yet.</p> : jobs.map((j, i) => (
+              <motion.button key={j.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}
+                onClick={() => navigate(`/job-queue?job=${j.id}`)} className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-white/[0.03]">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-ink-100">{j.videoName}</p>
+                  <p className="truncate text-xs text-ink-400">{j.projectName} · {formatRelative(j.queuedAt)}</p>
+                </div>
+                <Badge tone={jobTone(j.status)} dot={j.status === 'running'} pulse={j.status === 'running'}>{j.status === 'running' && j.framesTotal ? `${j.progressPercent}%` : j.status}</Badge>
+              </motion.button>
+            ))}
+          </div>
+        </Card>
       </div>
-      <p className="mt-1 text-xs leading-relaxed text-ink-300">{text}</p>
+
+      <Card padding="none">
+        <div className="flex items-center justify-between px-5 pt-5">
+          <p className="text-sm font-semibold text-white">Recent reports</p>
+          <Link to="/reports" className="flex items-center gap-1 text-xs text-brand-300 hover:text-brand-200">All <ArrowRight size={12} /></Link>
+        </div>
+        <div className="mt-3 divide-y divide-white/[0.04]">
+          {reports.length === 0 ? <p className="px-5 pb-5 text-xs text-ink-400">No reports yet.</p> : reports.map((r) => (
+            <button key={r.id} onClick={() => navigate(`/reports?report=${r.id}`)} className="flex w-full items-center gap-3 px-5 py-3 text-left hover:bg-white/[0.03]">
+              <FileBarChart size={15} className="shrink-0 text-violet-300" />
+              <span className="min-w-0 flex-1 truncate text-sm text-ink-100">{r.title}</span>
+              <span className="shrink-0 text-xs text-ink-400">{formatNumber(r.vehiclesCounted)} vehicles · {formatRelative(r.generatedAt)}</span>
+            </button>
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }
 
-function SegmentStat({ label, value }: { label: string; value: string }) {
+function Kpi({ icon: Icon, label, value, hint }: { icon: typeof Car; label: string; value: string; hint?: string }) {
   return (
-    <div className="rounded-lg border border-white/[0.05] bg-ink-900/40 p-3 text-center">
-      <div className="text-lg font-semibold text-white">{value}</div>
-      <div className="mt-0.5 text-[10px] uppercase tracking-wide text-ink-400">{label}</div>
-    </div>
-  );
-}
-
-interface ChartTooltipProps {
-  active?: boolean;
-  payload?: Array<{ value: number; name: string; payload: Record<string, string | number> }>;
-  valueFormatter?: (v: number) => string;
-}
-
-function ChartTooltip({ active, payload, valueFormatter }: ChartTooltipProps) {
-  if (!active || !payload || payload.length === 0) return null;
-  return (
-    <div className="rounded-lg border border-white/10 bg-ink-850 px-3 py-2 shadow-pop">
-      <p className="text-xs font-medium text-white">
-        {payload[0].payload.hour ? `${payload[0].payload.hour}:00` : payload[0].name}
-      </p>
-      <p className="mt-0.5 text-xs text-ink-300">
-        {valueFormatter ? valueFormatter(payload[0].value) : formatNumber(payload[0].value)}
-      </p>
-    </div>
+    <Card padding="md">
+      <div className="flex items-center gap-2 text-xs text-ink-400"><Icon size={14} /> {label}</div>
+      <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
+      {hint && <div className="mt-1 text-[11px] text-ink-500">{hint}</div>}
+    </Card>
   );
 }

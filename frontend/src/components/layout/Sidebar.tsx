@@ -62,17 +62,14 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* Storage / quota footer */}
+      {/* Quota footer: no plan limits have been decided (O39), so no quota or percentage is shown */}
       <div className="m-3 rounded-xl border border-white/[0.06] bg-ink-850 p-4">
         <div className="flex items-center justify-between text-xs">
-          <span className="font-medium text-ink-200">Compute quota</span>
-          <span className="text-ink-400">68%</span>
-        </div>
-        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
-          <div className="h-full w-[68%] rounded-full bg-gradient-to-r from-brand-500 to-accent-500" />
+          <span className="font-medium text-ink-200">Usage</span>
+          <span className="text-ink-400">No limits set</span>
         </div>
         <p className="mt-2 text-[11px] text-ink-400">
-          1,360 / 2,000 GPU-hours used this cycle
+          Real usage is on the <NavLink to="/organization" className="text-brand-300 hover:text-brand-200">Organization</NavLink> page.
         </p>
       </div>
     </aside>

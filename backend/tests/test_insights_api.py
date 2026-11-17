@@ -84,7 +84,8 @@ def test_csv_export_matches_the_report_is_cached_and_safe(client, done, store):
     assert ["Counts are estimates", "yes"] in rows
     again = client.get(f"/api/reports/{rid}/export.csv", headers=tok(1))
     assert again.content == r.content and scalar(org.maker, "select count(*) from report_files") == 1
-    assert client.get(f"/api/reports/{rid}/export.pdf", headers=tok(1)).status_code == 501
+    pdf = client.get(f"/api/reports/{rid}/export.pdf", headers=tok(1))
+    assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF-1.4") and pdf.headers["content-type"] == "application/pdf"
 
 
 # --- F39 ---

@@ -92,7 +92,103 @@ export interface ConfigurationOptions {
   limits: { maxLines: number; maxZones: number; maxZonePoints: number };
 }
 
+export interface MethodTotals { total: number; byClass: Record<string, number>; byDirection: Record<string, number> }
+export interface AnalyticsSummary {
+  isEstimate: boolean;
+  basis: string;
+  videosAnalysed: number;
+  lastCompletedAt: string | null;
+  lineCrossing: MethodTotals;
+  zonePresence: MethodTotals;
+  byProject: Record<string, { lineCrossing: number; zonePresence: number }>;
+  jobsByStatus: Record<string, number>;
+}
+
+export interface ReportItem {
+  id: string;
+  projectId: string;
+  jobId: string;
+  title: string;
+  type: 'summary' | 'peak';
+  method: 'line_crossing' | 'zone_presence';
+  version: number;
+  vehiclesCounted: number;
+  generatedAt: string;
+  isEstimate: boolean;
+}
+
+export interface ReportDetail extends ReportItem {
+  options: { classes: string[] | null; directions: string[] | null };
+  bucketSeconds: number;
+  analysisVersion: string;
+  totalsByClass: Record<string, number>;
+  totalsByDirection: Record<string, number>;
+  series: { index: number; startSeconds: number; count: number }[];
+  peak: { index: number; startSeconds: number; count: number } | null;
+  rows: { index: number; startSeconds: number; class: string; direction: string; line: string | null; zone: string | null; count: number }[];
+}
+
+export interface ActivityItem {
+  id: number;
+  at: string;
+  action: string;
+  outcome: string;
+  entityType: string | null;
+  entityId: string | null;
+  actor: string;
+}
+
+export type JobStatusName ='queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface JobItem {
+  id: string;
+  projectId: string;
+  uploadId: string;
+  status: JobStatusName;
+  stage: string;
+  progressPercent: number;
+  framesDone: number;
+  /** null when the total is not known: then no percentage or time estimate is shown. */
+  framesTotal: number | null;
+  processingFps: number | null;
+  attempt: number;
+  retryable: boolean;
+  error: { code: string; message: string; diagnosticId: string } | null;
+  cancelRequested: boolean;
+  queuePosition: number | null;
+  device: string | null;
+  model: string | null;
+  videoName: string | null;
+  projectName: string | null;
+  queuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface JobResults {
+  isEstimate: boolean;
+  method: 'line_crossing' | 'zone_presence';
+  vehiclesCounted: number;
+  totalsByClass: Record<string, number>;
+  bucketSeconds: number;
+  framesProcessed: number;
+  provenance: { model: string; modelSha256: string; codeVersion: string; device: string | null };
+  artifacts: { id: string; kind: string; contentType: string; sizeBytes: number }[];
+}
+
 const MESSAGES: Record<string, string> = {
+  job_not_found: 'That job was not found.',
+  job_not_cancellable: 'This job has already finished, so it cannot be cancelled.',
+  job_not_retryable: 'Only a failed job that can be retried may be retried.',
+  job_not_finished: 'Only a finished job can be run again.',
+  source_removed: 'The video file has been removed, so it cannot be processed.',
+  configuration_missing: 'Save the analysis settings, with at least one counting line or zone, first.',
+  result_not_available: 'This job has no result yet.',
+  too_many_jobs: 'Your organisation already has the maximum number of jobs waiting or running. Wait for some to finish.',
+  too_many_versions: 'This report already has the maximum number of versions.',
+  storage_quota_exceeded: "Your organisation's video storage is full. Remove videos you no longer need.",
+  frame_count_mismatch: 'The video is much longer than its file header says, so it was stopped.',
+  pdf_not_available: 'PDF export is not available yet. Use the CSV export.',
   project_not_found: 'That project was not found.',
   project_name_taken: 'A project with that name already exists.',
   project_archived: 'This project is archived. Restore it before changing it.',
@@ -196,7 +292,63 @@ export const VideoSetupService = {
     return (await api.put(`/projects/${projectId}/uploads/${uploadId}/configuration`, body)).data.configuration;
   },
 
-  // --- jobs (F28) ---
+  // --- analytics, reports, activity (F37, F38, F40) ---
+  async analyticsSummary(params: { projectId?: string; from?: string; to?: string } = {}): Promise<AnalyticsSummary> {
+    return (await api.get('/analytics/summary', { params })).data;
+  },
+  async listReports(params: { projectId?: string; limit?: number; offset?: number } = {}): Promise<Page<ReportItem>> {
+    return (await api.get('/reports', { params })).data;
+  },
+  async getReport(id: string): Promise<ReportDetail> {
+    return (await api.get(`/reports/${id}`)).data.report;
+  },
+  async createReport(jobId: string, body: { type?: 'summary' | 'peak'; classes?: string[]; directions?: string[]; newVersion?: boolean } = {}): Promise<{ report: ReportDetail; existing: boolean }> {
+    return (await api.post(`/jobs/${jobId}/reports`, body)).data;
+  },
+  async downloadReportPdf(id: string, fileName: string): Promise<void> {
+    return VideoSetupService.downloadReportFile(id, 'pdf', fileName);
+  },
+  async downloadReportCsv(id: string, fileName: string): Promise<void> {
+    return VideoSetupService.downloadReportFile(id, 'csv', fileName);
+  },
+  /** Downloads an export with the sign-in header and saves it through a temporary local link. */
+  async downloadReportFile(id: string, format: 'csv' | 'pdf', fileName: string): Promise<void> {
+    const res = await api.get(`/reports/${id}/export.${format}`, { responseType: 'blob' });
+    const url = URL.createObjectURL(res.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  },
+  async projectActivity(projectId: string, before?: number): Promise<{ items: ActivityItem[]; nextBefore: number | null }> {
+    return (await api.get(`/projects/${projectId}/activity`, { params: before ? { before } : {} })).data;
+  },
+
+  // --- jobs (F28, F35, F36) ---
+  async listJobs(params: { status?: JobStatusName; projectId?: string; limit?: number; offset?: number } = {}): Promise<Page<JobItem>> {
+    return (await api.get('/jobs', { params })).data;
+  },
+  async cancelJob(id: string): Promise<JobItem> {
+    return (await api.post(`/jobs/${id}/cancel`)).data.job;
+  },
+  async retryJob(id: string): Promise<JobItem> {
+    return (await api.post(`/jobs/${id}/retry`)).data.job;
+  },
+  /** A fresh key per click: a network retry of the same click returns the same new job, never two. */
+  async rerunJob(id: string, idempotencyKey: string = (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `r-${Date.now()}-${Math.random().toString(36).slice(2)}`)): Promise<JobItem> {
+    return (await api.post(`/jobs/${id}/rerun`, {}, { headers: { 'Idempotency-Key': idempotencyKey } })).data.job;
+  },
+  async jobResults(id: string): Promise<JobResults> {
+    return (await api.get(`/jobs/${id}/results`)).data;
+  },
+  /** The annotated video is protected, so it is fetched with the sign-in header into a temporary local address. */
+  async annotatedVideoUrl(id: string): Promise<string> {
+    const res = await api.get(`/jobs/${id}/annotated-video`, { responseType: 'blob', timeout: 0 });
+    return URL.createObjectURL(res.data);
+  },
   /** The same key on a retry returns the same job instead of queueing a second one. */
   async queueJob(projectId: string, uploadId: string, idempotencyKey: string): Promise<{ job: { id: string; status: string }; replayed: boolean }> {
     return (await api.post(`/projects/${projectId}/uploads/${uploadId}/jobs`, {}, { headers: { 'Idempotency-Key': idempotencyKey } })).data;

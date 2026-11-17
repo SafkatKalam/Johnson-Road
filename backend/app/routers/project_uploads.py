@@ -155,6 +155,10 @@ def _view(u: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class _QuotaExceeded(Exception):
+    """The organisation's storage quota (ORG_MAX_STORAGE_BYTES) would be exceeded by this video."""
+
+
 def _clean_name(raw: str | None) -> tuple[str, str]:
     """(display name, extension). Only the last path segment, no control characters, at most 200 characters."""
     name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1]
@@ -218,7 +222,9 @@ def upload_video(
             if prior["status"] == "ready":
                 response.status_code = 200
                 return {"upload": _view(prior), "replayed": True}   # a retry after a lost response: same row, nothing new stored
-            raise AppError("upload_in_progress", 409, "This upload is already being received.")
+            # A 'receiving' row left by a crash would block this key for ever: after 30 minutes it is failed and freed.
+            if not repo.expire_stale_receiving(db, prior["id"], minutes=30):
+                raise AppError("upload_in_progress", 409, "This upload is already being received.")
 
     # 2. Unfinished row first (committed), then the file, then the real reader, then ready.
     storage_key = make_key(org, project_id, ext)
@@ -229,7 +235,9 @@ def upload_video(
         size, checksum = storage.write_stream("sources", storage_key, _chunks(file), max_bytes=settings.upload_max_bytes)
         if size == 0:
             raise media.ProbeError(media.EMPTY)
-        measured = media.probe(storage.resolve("sources", storage_key), max_duration_seconds=settings.upload_max_duration_seconds,
+        if settings.org_max_storage_bytes is not None and repo.storage_used(db, org) + size > settings.org_max_storage_bytes:
+            raise _QuotaExceeded()
+        measured = media.probe_isolated(storage.resolve("sources", storage_key), max_duration_seconds=settings.upload_max_duration_seconds,
                                max_pixels=settings.upload_max_pixels)
         preview_key = make_key(org, project_id, "jpg", object_id=upload_id)
         storage.write_stream("previews", preview_key, iter([measured.preview_jpeg]), max_bytes=20 * 1024 * 1024)
@@ -239,6 +247,10 @@ def upload_video(
         _remove("sources", storage_key)
         repo.mark_failed(db, upload_id=upload_id, organization_id=org, user_id=user, code="file_too_large")
         raise AppError("file_too_large", 413, "That video is larger than the allowed size.")
+    except _QuotaExceeded:
+        _remove("sources", storage_key)
+        repo.mark_failed(db, upload_id=upload_id, organization_id=org, user_id=user, code="storage_quota_exceeded")
+        raise AppError("storage_quota_exceeded", 413, "Your organisation's video storage is full. Remove videos you no longer need.")
     except media.ProbeError as exc:
         _remove("sources", storage_key)
         _remove("previews", preview_key)
@@ -279,9 +291,11 @@ def read_upload(project_id: UUID, upload_id: UUID, who: Principal = Depends(curr
 def read_preview(project_id: UUID, upload_id: UUID, who: Principal = Depends(current_member), db: Session = Depends(get_db)):
     u = repo.get_any(db, who.organization_id, upload_id, project_id)
     key = u["preview_frame_key"]
-    if u["status"] != "ready" or u["source_deleted_at"] is not None or not key or not key_belongs_to(key, who.organization_id):
+    if u["status"] != "ready" or u["source_deleted_at"] is not None or not key:
         raise repo.upload_not_found()
     try:
+        if not key_belongs_to(key, who.organization_id):
+            raise repo.upload_not_found()
         path = storage.resolve("previews", key)
         if not storage.exists("previews", key):
             raise StorageNotFound()

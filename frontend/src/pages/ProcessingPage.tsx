@@ -1,329 +1,148 @@
-import { useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
-import {
-  Cpu,
-  Clock,
-  Gauge,
-  Activity,
-  Terminal,
-  CheckCircle2,
-  Layers,
-  Video,
-  Film,
-  Pause,
-  Square,
-  Play,
-  Monitor,
-  MemoryStick,
-  HardDrive,
-  ListOrdered,
-  Eye,
-} from 'lucide-react';
-import { Card, CardHeader, Button, Badge, ProgressBar, Timeline } from '@/components/ui';
-import {
-  processingJobs,
-  processingLogs,
-  timelineStages,
-  segments,
-  type LogEntry,
-} from '@/services/processing.service';
-import { formatCompact, formatTime } from '@/lib/utils';
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Cpu, Activity, AlertCircle, Loader2, ListChecks, XCircle } from 'lucide-react';
+import { Card, CardHeader, Badge, Button, ProgressBar, EmptyState } from '@/components/ui';
+import { api } from '@/services/api';
+import { VideoSetupService, describeSetupError, type JobItem } from '@/services/videoSetup.service';
+import { formatCompact } from '@/lib/utils';
 
-const levelTone: Record<LogEntry['level'], string> = {
-  info: 'text-ink-300',
-  success: 'text-brand-300',
-  warn: 'text-warn-400',
-  error: 'text-err-400',
-};
+interface JobEvent { id: number; attempt: number; at: string; level: 'info' | 'success' | 'warn' | 'error'; code: string; message: string }
 
-const levelTag: Record<LogEntry['level'], string> = {
-  info: 'INFO',
-  success: 'OK  ',
-  warn: 'WARN',
-  error: 'ERR ',
-};
+const POLL_MS = 2000;
+const levelTone: Record<JobEvent['level'], string> = { info: 'text-ink-300', success: 'text-brand-300', warn: 'text-warn-400', error: 'text-err-400' };
 
+/** Live view of jobs that are queued or running: real frames, speed and the job's own log lines. Nothing is estimated. */
 export function ProcessingPage() {
-  const activeJob = processingJobs.find((j) => j.status === 'processing') ?? processingJobs[0];
-  const [logs, setLogs] = useState<LogEntry[]>(processingLogs);
-  const [elapsed, setElapsed] = useState(3628);
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const [jobs, setJobs] = useState<JobItem[]>([]);
+  const [events, setEvents] = useState<JobEvent[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState('');
+  const selected = params.get('job') ?? jobs[0]?.id ?? null;
 
-  useEffect(() => {
-    const messages: Array<{ level: LogEntry['level']; message: string }> = [
-      { level: 'info', message: 'Loaded frame 52048/77840 — segment 3/4' },
-      { level: 'success', message: 'Tracking 38 vehicles in current frame' },
-      { level: 'info', message: 'YOLOv8x inference: 38.4 FPS' },
-      { level: 'success', message: 'Vehicle classification updated — car 71%, truck 12%' },
-      { level: 'info', message: 'GPU utilization 96% — NVIDIA A100' },
-    ];
-    const interval = setInterval(() => {
-      const msg = messages[Math.floor(Math.random() * messages.length)];
-      setLogs((prev) =>
-        [{ id: String(Date.now()), time: formatTime((Date.now() / 1000) % 86400), ...msg }, ...prev].slice(0, 40),
-      );
-      setElapsed((e) => e + 2);
-    }, 2400);
-    return () => clearInterval(interval);
+  const load = useCallback(async () => {
+    try {
+      const [running, queued] = await Promise.all([
+        VideoSetupService.listJobs({ status: 'running', limit: 20 }),
+        VideoSetupService.listJobs({ status: 'queued', limit: 20 }),
+      ]);
+      setJobs([...running.items, ...queued.items]);
+      setError('');
+    } catch (e) {
+      setError(describeSetupError(e));
+    } finally {
+      setLoaded(true);
+    }
   }, []);
 
-  const progress = activeJob.progress;
+  useEffect(() => {
+    load();
+    const t = setInterval(load, POLL_MS);
+    return () => clearInterval(t);
+  }, [load]);
+
+  useEffect(() => {
+    if (!selected) { setEvents([]); return; }
+    let alive = true;
+    const pull = () => api.get(`/jobs/${selected}/events`, { params: { limit: 200 } })
+      .then((r) => { if (alive) setEvents(r.data.items); })
+      .catch(() => { if (alive) setEvents([]); });
+    pull();
+    const t = setInterval(pull, POLL_MS);
+    return () => { alive = false; clearInterval(t); };
+  }, [selected]);
+
+  const job = jobs.find((j) => j.id === selected) ?? null;
 
   return (
     <div className="space-y-6">
-      {/* Header + controls */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-semibold text-white">{activeJob.projectName}</h2>
-            <Badge tone="sky" dot pulse>Processing</Badge>
-          </div>
-          <p className="mt-1 text-sm text-ink-400">
-            Stage: {activeJob.stage} · ETA {activeJob.eta} · {activeJob.fps} FPS
-          </p>
+      <div>
+        <h2 className="text-lg font-semibold text-white">Processing</h2>
+        <p className="mt-1 text-sm text-ink-400">Jobs that are running or waiting. Finished jobs are on the Job Queue.</p>
+      </div>
+
+      {error && (
+        <div role="alert" className="flex items-center gap-2 rounded-lg border border-err-500/20 bg-err-500/[0.06] px-3 py-2.5 text-sm text-err-400">
+          <AlertCircle size={15} /> {error}
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" leftIcon={<Pause size={14} />}>Pause</Button>
-          <Button variant="danger" size="sm" leftIcon={<Square size={14} />}>Stop</Button>
-        </div>
-      </div>
+      )}
 
-      {/* Live metrics strip */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <MetricTile label="Progress" value={`${progress}%`} icon={<Activity size={15} />} tone="sky" />
-        <MetricTile label="Elapsed" value={formatTime(elapsed)} icon={<Clock size={15} />} tone="brand" />
-        <MetricTile label="Vehicles so far" value={formatCompact(activeJob.vehicleCount)} icon={<Film size={15} />} tone="violet" />
-        <MetricTile label="Inference speed" value={`${activeJob.fps} FPS`} icon={<Gauge size={15} />} tone="amber" />
-      </div>
-
-      {/* Current frame preview + progress */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2" padding="lg">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-500/12 text-brand-300 ring-1 ring-brand-500/20">
-                <Cpu size={20} />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-white">Current video analysis</h3>
-                <p className="text-xs text-ink-400">cam_03_junction_20260725.mp4 · segment 3 of 4</p>
-              </div>
-            </div>
-            <span className="font-mono text-sm text-ink-300">{activeJob.currentFrame} / 18:00:00</span>
-          </div>
-
-          {/* Frame preview */}
-          <div className="mt-5 overflow-hidden rounded-xl border border-white/[0.08] bg-ink-950/60">
-            <div className="relative aspect-video bg-gradient-to-br from-ink-800/40 to-ink-900/60">
-              <div className="absolute inset-0 bg-grid-faint [background-size:20px_20px] opacity-20" />
-              {/* Simulated detection boxes */}
-              {[
-                { x: '12%', y: '30%', w: '8%', h: '18%', label: 'car 0.94' },
-                { x: '35%', y: '45%', w: '10%', h: '22%', label: 'truck 0.91' },
-                { x: '55%', y: '25%', w: '7%', h: '16%', label: 'car 0.97' },
-                { x: '70%', y: '50%', w: '9%', h: '20%', label: 'bus 0.88' },
-                { x: '85%', y: '35%', w: '6%', h: '14%', label: 'moto 0.82' },
-              ].map((box, i) => (
-                <motion.div
-                  key={i}
-                  className="absolute border-2 border-brand-400/70 rounded-sm"
-                  style={{ left: box.x, top: box.y, width: box.w, height: box.h }}
-                  animate={{ opacity: [0.6, 1, 0.6] }}
-                  transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.2 }}
-                >
-                  <span className="absolute -top-4 left-0 whitespace-nowrap rounded bg-brand-500/80 px-1 text-[9px] font-mono text-ink-950">
-                    {box.label}
-                  </span>
-                </motion.div>
-              ))}
-              <div className="absolute left-3 top-3 flex items-center gap-2">
-                <span className="flex items-center gap-1 rounded bg-ink-950/60 px-2 py-0.5 text-[10px] font-mono text-brand-300 backdrop-blur-sm">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-400" /> DETECTING
-                </span>
-                <span className="rounded bg-ink-950/60 px-2 py-0.5 text-[10px] font-mono text-ink-300 backdrop-blur-sm">
-                  Frame 52048/77840
-                </span>
-              </div>
-              <div className="absolute bottom-3 right-3 rounded bg-ink-950/60 px-2 py-0.5 text-[10px] font-mono text-ink-300 backdrop-blur-sm">
-                38 vehicles tracked
-              </div>
-              <div className="absolute bottom-3 left-3 flex items-center gap-1 rounded bg-ink-950/60 px-2 py-0.5 text-[10px] font-mono text-ink-300 backdrop-blur-sm">
-                <Eye size={10} /> Live preview
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="mb-2 flex items-center justify-between text-xs">
-              <span className="text-ink-400">Overall progress</span>
-              <span className="font-medium text-white">{progress}%</span>
-            </div>
-            <ProgressBar value={progress} size="lg" tone="sky" />
-          </div>
+      {!loaded ? (
+        <Card padding="lg"><p className="flex items-center gap-2 text-sm text-ink-400"><Loader2 size={15} className="animate-spin" /> Loading…</p></Card>
+      ) : jobs.length === 0 ? (
+        <Card padding="none">
+          <EmptyState icon={Cpu} title="Nothing is processing" description="Queue a video from the Upload Center. Finished jobs are listed on the Job Queue."
+            action={<Button variant="secondary" leftIcon={<ListChecks size={15} />} onClick={() => navigate('/job-queue')}>Open Job Queue</Button>} />
         </Card>
-
-        {/* Resource usage gauges */}
-        <Card padding="md">
-          <CardHeader title="Resource usage" subtitle="Live system metrics" icon={<Gauge size={16} />} />
-          <div className="mt-4 space-y-4">
-            <ResourceGauge icon={Cpu} label="GPU" value={94} unit="%" tone="brand" detail="NVIDIA A100" />
-            <ResourceGauge icon={Monitor} label="CPU" value={72} unit="%" tone="sky" detail="16 cores" />
-            <ResourceGauge icon={MemoryStick} label="Memory" value={68} unit="%" tone="amber" detail="7.2 GB / 10.5 GB" />
-            <ResourceGauge icon={HardDrive} label="VRAM" value={85} unit="%" tone="violet" detail="21.3 GB / 25 GB" />
-          </div>
-          <div className="mt-4 border-t border-white/[0.06] pt-4">
-            <div className="flex items-center gap-2 text-xs text-ink-400">
-              <ListOrdered size={13} />
-              <span>Queue position: <span className="font-medium text-white">1 of 2 jobs</span></span>
-            </div>
-            <div className="mt-1.5 flex items-center gap-2 text-xs text-ink-400">
-              <Clock size={13} />
-              <span>Processing speed: <span className="font-medium text-white">{activeJob.fps} FPS</span></span>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Pipeline timeline */}
-        <Card padding="md" className="lg:col-span-1">
-          <CardHeader title="Processing pipeline" subtitle="Stage-by-stage progress" icon={<Layers size={16} />} />
-          <div className="mt-5">
-            <Timeline
-              items={timelineStages.map((s) => ({
-                id: s.id,
-                label: s.label,
-                meta: (
+      ) : (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <Card padding="none" className="lg:col-span-1">
+            <div className="divide-y divide-white/[0.04]">
+              {jobs.map((j) => (
+                <button key={j.id} onClick={() => setParams({ job: j.id })} aria-current={j.id === selected}
+                  className={`flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-white/[0.03] ${j.id === selected ? 'bg-white/[0.05]' : ''}`}>
                   <span className="flex items-center gap-2">
-                    <span>{s.startedAt}</span>
-                    {s.duration !== '—' && <span>· {s.duration}</span>}
+                    <span className="truncate text-sm text-ink-100">{j.videoName}</span>
+                    <Badge tone={j.status === 'running' ? 'sky' : 'amber'} dot={j.status === 'running'} pulse={j.status === 'running'}>{j.cancelRequested ? 'cancelling' : j.status}</Badge>
                   </span>
-                ),
-                status: s.status,
-              }))}
-            />
-          </div>
-        </Card>
+                  <span className="text-xs text-ink-400">{j.projectName}{j.status === 'queued' && j.queuePosition ? ` · position ${j.queuePosition}` : ''}</span>
+                </button>
+              ))}
+            </div>
+          </Card>
 
-        {/* Live logs */}
-        <Card padding="none" className="lg:col-span-2">
-          <CardHeader
-            title="Processing logs"
-            subtitle="Live stream from AI pipeline"
-            icon={<Terminal size={16} />}
-            className="border-b border-white/[0.06] px-5 py-4"
-            action={
-              <div className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-brand-400" />
-                <span className="text-xs text-ink-400">Live</span>
-              </div>
-            }
-          />
-          <div className="h-80 overflow-y-auto bg-ink-950/60 p-4 font-mono text-xs">
-            {logs.map((log) => (
-              <motion.div
-                key={log.id}
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="flex gap-3 py-0.5"
-              >
-                <span className="shrink-0 text-ink-500">{log.time}</span>
-                <span className={`shrink-0 font-semibold ${levelTone[log.level]}`}>{levelTag[log.level]}</span>
-                <span className="text-ink-300">{log.message}</span>
-              </motion.div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* Completed segments */}
-      <Card padding="md">
-        <CardHeader
-          title="Video segments"
-          subtitle="24-hour footage split into 6-hour segments"
-          icon={<Video size={16} />}
-        />
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {segments.map((seg) => {
-            const tone = seg.status === 'completed' ? 'brand' : seg.status === 'processing' ? 'sky' : 'slate';
-            return (
-              <div
-                key={seg.id}
-                className="rounded-xl border border-white/[0.05] bg-ink-900/40 p-4 transition-colors hover:border-white/10"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs text-ink-300">Segment {seg.id}</span>
-                  {seg.status === 'completed' ? (
-                    <CheckCircle2 size={15} className="text-brand-400" />
-                  ) : seg.status === 'processing' ? (
-                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}>
-                      <Play size={13} className="text-accent-400" />
-                    </motion.div>
+          <div className="space-y-4 lg:col-span-2">
+            {job && (
+              <Card padding="lg">
+                <CardHeader title={job.videoName ?? 'Job'} subtitle={`${job.projectName ?? ''} · stage: ${job.stage}`} icon={<Activity size={16} />} />
+                <div className="mt-5 space-y-3">
+                  {job.status === 'running' ? (
+                    <>
+                      {job.framesTotal ? <ProgressBar value={job.progressPercent} tone="sky" /> : <p className="text-xs text-ink-400">Total frame count unknown, so no percentage is shown.</p>}
+                      <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                        <Fact label="Progress" value={job.framesTotal ? `${job.progressPercent}%` : '—'} />
+                        <Fact label="Frames" value={`${formatCompact(job.framesDone)}${job.framesTotal ? ' / ' + formatCompact(job.framesTotal) : ''}`} />
+                        <Fact label="Speed" value={job.processingFps ? `${job.processingFps} fps` : '—'} />
+                        <Fact label="Device" value={job.device ?? '—'} />
+                      </div>
+                    </>
                   ) : (
-                    <Clock size={14} className="text-ink-500" />
+                    <p className="text-sm text-ink-300">Waiting for a worker{job.queuePosition ? ` (position ${job.queuePosition} in the queue)` : ''}.</p>
+                  )}
+                  {!job.cancelRequested && (
+                    <Button variant="ghost" size="sm" leftIcon={<XCircle size={13} />}
+                      onClick={() => VideoSetupService.cancelJob(job.id).then(load).catch((e) => setError(describeSetupError(e)))}>
+                      Cancel job
+                    </Button>
                   )}
                 </div>
-                <div className="mt-3 text-sm font-medium text-ink-100">{seg.range}</div>
-                <div className="text-xs text-ink-400">{seg.duration} of footage</div>
-                {seg.vehicles > 0 ? (
-                  <div className="mt-3 flex items-center justify-between border-t border-white/[0.04] pt-3">
-                    <span className="text-xs text-ink-400">Vehicles</span>
-                    <span className="text-sm font-semibold text-white">{formatCompact(seg.vehicles)}</span>
-                  </div>
-                ) : (
-                  <div className="mt-3">
-                    <ProgressBar value={seg.status === 'processing' ? 45 : 0} size="sm" tone={tone === 'slate' ? 'brand' : 'sky'} />
-                  </div>
-                )}
+              </Card>
+            )}
+            <Card padding="lg">
+              <CardHeader title="Log" subtitle="Messages from the worker for this job" />
+              <div className="mt-4 max-h-80 space-y-1.5 overflow-y-auto font-mono text-xs" aria-live="polite">
+                {events.length === 0 ? <p className="text-ink-400">No messages yet.</p> : events.map((e) => (
+                  <p key={e.id} className={levelTone[e.level]}>
+                    <span className="text-ink-500">{new Date(e.at).toLocaleTimeString()} </span>
+                    {e.attempt > 1 ? <span className="text-ink-500">[attempt {e.attempt}] </span> : null}
+                    {e.message}
+                  </p>
+                ))}
               </div>
-            );
-          })}
+            </Card>
+          </div>
         </div>
-      </Card>
+      )}
     </div>
   );
 }
 
-function ResourceGauge({ icon: Icon, label, value, unit, tone, detail }: { icon: typeof Cpu; label: string; value: number; unit: string; tone: 'brand' | 'sky' | 'amber' | 'violet'; detail: string }) {
-  const tones: Record<string, 'brand' | 'sky' | 'amber' | 'rose'> = {
-    brand: 'brand',
-    sky: 'sky',
-    amber: 'amber',
-    violet: 'sky',
-  };
+function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <div className="flex items-center justify-between text-xs">
-        <span className="flex items-center gap-1.5 text-ink-300">
-          <Icon size={13} className="text-ink-400" /> {label}
-        </span>
-        <span className="font-mono font-semibold text-white">{value}{unit}</span>
-      </div>
-      <div className="mt-1.5">
-        <ProgressBar value={value} size="sm" tone={tones[tone]} />
-      </div>
-      <p className="mt-1 text-[10px] text-ink-500">{detail}</p>
+    <div className="rounded-lg border border-white/[0.06] bg-ink-900/40 p-2.5">
+      <div className="text-[11px] text-ink-400">{label}</div>
+      <div className="mt-0.5 font-medium text-white">{value}</div>
     </div>
-  );
-}
-
-function MetricTile({ label, value, icon, tone }: { label: string; value: string; icon: React.ReactNode; tone: 'brand' | 'sky' | 'amber' | 'violet' }) {
-  const tones: Record<string, string> = {
-    brand: 'bg-brand-500/12 text-brand-300 ring-brand-500/20',
-    sky: 'bg-accent-500/12 text-accent-400 ring-accent-500/20',
-    amber: 'bg-warn-500/12 text-warn-400 ring-warn-500/20',
-    violet: 'bg-violet-500/12 text-violet-300 ring-violet-500/20',
-  };
-  return (
-    <Card padding="md">
-      <div className="flex items-center gap-3">
-        <div className={`flex h-9 w-9 items-center justify-center rounded-lg ring-1 ring-inset ${tones[tone]}`}>
-          {icon}
-        </div>
-        <div>
-          <div className="font-mono text-base font-semibold text-white">{value}</div>
-          <div className="text-xs text-ink-400">{label}</div>
-        </div>
-      </div>
-    </Card>
   );
 }

@@ -84,6 +84,53 @@ Not done for F15–F19: audit round 3, typecheck and lint after round 2 fixes (t
 - Not verified: a real browser upload, large files, real camera videos, mp4/mkv decoding on this machine (tests use AVI/MJPG), concurrency of two uploads with the same key at the same instant, Windows file locking during delete.
 - Undo: delete the new files listed above and revert `app/main.py`, `app/routers/__init__.py`, `app/routers/projects.py`, `app/core/config.py`; nothing was committed and no migration was added.
 
+## 2d. F27–F42, recorded 2026-11-17
+
+**Section D, processing (F28–F36), As built.** `app/engine/` (frame reader with truncation check; trackers `sort` and `bytetrack`, own implementation, greedy overlap matching; line crossing with finite segment, 0.003 jitter band, count point = bottom centre of the box, once per track per line; zone presence once per track per zone; line events attributed to the first containing zone; class decided per track at the end), `app/repositories/job_repository.py`, `app/worker/` (`python -m app.worker`; SKIP LOCKED claim; supervisor thread for heartbeat, cancel and optional deadline; fenced writes; stale jobs failed as `worker_lost` after 120 s without heartbeat, retryable), `app/routers/jobs.py`. Result, buckets, artifact and completion in one transaction; cancel requested before commit wins. Annotated video written as H.264 if this OpenCV build supports it, else MPEG-4 (may not play in browsers; O36/O77 open). `/health` `workerReady` reads the worker's heartbeat. Proposals not yet agreed: count point, jitter band, 120 s staleness, no job timeout by default (O46), any member may cancel/retry/rerun. BoT-SORT is not implemented and is no longer offered.
+
+**Section E backend (F37–F41), As built.** `app/routers/insights.py`, `report_db_repository.py`, `notification_repository.py`, `app/maintenance.py`. Analytics = latest completed job per video; line and zone totals never added together. Reports: same options return the same report, `newVersion` makes v+1; report types `summary` and `peak` only (daily/weekly need the clock rules O34/O68); CSV export cached, formula-safe; **PDF returns 501** (a PDF library would need an install). Notifications in the same transaction as the event; only the owner sees them. Project activity from the audit log; organisation audit log for owner/admin. Orphan scan reports only unless `--apply`; source deletion keeps results; automatic retention disabled.
+
+**F27 and F42 (frontend), As built.** Upload wizard, Job Queue, Processing, Projects, Project detail, Reports, Dashboard, notification bell, global search and the sidebar now use the real API; the invented GPU-hour/queue/time estimates, sample projects, sample notifications and the sidebar quota are gone. The notification bell previously could not be opened (bug) — fixed. Typecheck clean; lint 0 errors (1 older warning in `lib/auth.tsx`); production build succeeds.
+**Not verified in a browser:** the Supabase project `tbikgagbnheijjmnorea` stopped resolving on 2026-11-17 (probably paused), so no one can sign in. The browser script `run3.mjs` (wizard end to end) is written and has not run.
+
+**Tests:** full backend suite 584 passed (REQUIRE_DB=1) on 2026-11-17. The engine, worker and jobs are tested end to end on a synthetic video with a stand-in detector; the real YOLO model has not been run on real footage through the worker.
+
+**Section F (F43–F51): not done; each needs something only the client or Adrishikhar can provide.**
+| Feature | Needs |
+|---|---|
+| F43 accuracy | Representative client footage with manual counts; agreed accuracy targets (O37/O44) |
+| F44 load and faults | Target workload and hardware; approved limits (O8/O17/O46/O50) |
+| F45 security review | A first automated review was started 2026-11-17; production transport/storage controls need F47 |
+| F46 licences | Legal review of the YOLO weights (Ultralytics AGPL-3.0) and the delivery model |
+| F47 production architecture | Hosting choice, budget, data location |
+| F48 CI and packaging | Approval of a CI service |
+| F49 deploy, monitor, back up | Approval to create staging services |
+| F50 client acceptance | Client users, agreed journeys and footage |
+| F51 handover | Named operator and support owner |
+
+## 2e. Security fixes and Section F tooling, recorded 2026-11-17 (later)
+
+**Security review fixes (independent read-only review of F20–F42).** Old sample routers `/api/uploads`, `/api/processing`,
+`/api/dashboard` no longer registered (the upload one could write outside its folder). `UploadGuardMiddleware` refuses
+anonymous or declared-oversize upload bodies before they are read. Video checks run in a separate process with a time limit
+(`media.probe_isolated`); picture size checked before decoding. Reader stops when a video is far longer than its header
+(`frame_count_mismatch`). CSV guard covers leading spaces and full-width signs. A crashed `receiving` upload frees its key
+after 30 minutes. Queue position counts only the caller's organisation. Limits added (proposals): `ORG_MAX_ACTIVE_JOBS`
+(10), `ORG_MAX_STORAGE_BYTES` (unset), `REPORT_MAX_VERSIONS` (20), `JOB_TIMEOUT_SECONDS` (unset). Rerun accepts an
+`Idempotency-Key`. `requirements.txt` now pins `numpy` and `opencv-python` (previously only pulled in by ultralytics).
+
+**PDF export (F38).** `app/reports_pdf.py` writes the PDF directly (no library installed); `/reports/{id}/export.pdf`
+works and is cached like the CSV. PDF buttons on the Reports page and the project Reports tab.
+
+**Section F tooling (Proposal; nothing deployed).** F43 `backend/tools/evaluate_counts.py` (app CSV versus a manual count,
+or two runs). F44 `backend/tools/load_test.py`. F46 `backend/tools/licence_inventory.py` and its output
+`docs/LICENCE_INVENTORY.md` (flags the AGPL-3.0 YOLO weights and Ultralytics packages, LGPL psycopg). F48
+`scripts/check.sh`, `backend/Dockerfile`, `backend/.dockerignore`, `backend/docker-compose.release.example.yml` (example
+only). F49 `scripts/backup.sh`, `scripts/restore.sh` (dry run unless `--yes`). F51 `docs/OPERATIONS.md`.
+
+**Not run yet (testing was deferred on request):** the full backend suite after these changes, the PDF route test, the
+tools, the Docker build, the backup/restore scripts.
+
 ## 3. Verification actually performed
 
 - `REQUIRE_DB=1 pytest tests`: **156 passed, 0 skipped**, run against the Docker PostgreSQL 16.15 (throwaway databases, dropped afterwards).

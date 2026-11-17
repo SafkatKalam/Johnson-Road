@@ -90,6 +90,21 @@ def mark_ready(db: Session, *, upload_id: UUID, organization_id: Any, user_id: A
     return get_any(db, organization_id, upload_id)
 
 
+def storage_used(db: Session, organization_id: Any) -> int:
+    """Bytes of stored source video the organisation is using now (ready, not deleted)."""
+    return int(db.execute(text("""SELECT coalesce(sum(size_bytes), 0) FROM uploads WHERE organization_id = :o AND status = 'ready'
+                                   AND source_deleted_at IS NULL"""), {"o": organization_id}).scalar_one())
+
+
+def expire_stale_receiving(db: Session, upload_id: Any, *, minutes: int) -> bool:
+    """Fail a 'receiving' row older than `minutes` (left by a crash) and free its idempotency key. True if it did."""
+    n = db.execute(text("""UPDATE uploads SET status = 'failed', failure_code = 'interrupted', idempotency_key = NULL, updated_at = now()
+                           WHERE id = :id AND status = 'receiving' AND updated_at < now() - make_interval(mins => :m)"""),
+                   {"id": upload_id, "m": minutes}).rowcount
+    db.commit()
+    return n == 1
+
+
 def mark_failed(db: Session, *, upload_id: UUID, organization_id: Any, user_id: Any, code: str) -> None:
     """Record a refused or broken upload. Its idempotency key is released so the same retry can create a fresh row."""
     db.rollback()

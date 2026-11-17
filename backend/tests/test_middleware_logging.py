@@ -60,10 +60,11 @@ def test_access_log_uses_route_template_not_the_raw_path(client):
     logger, handler = _attach("johnsonroad.access")
     logger.setLevel(logging.INFO)
     try:
-        client.get("/api/processing/jobs/some-private-id-123")
+        client.get("/api/jobs/some-private-id-123")
     finally:
         logger.removeHandler(handler)
     assert handler.rows[0][0].route.endswith("{job_id}")
+    assert "some-private-id-123" not in handler.rows[0][0].route
 
 
 def test_request_id_pattern_rejects_trailing_newline():

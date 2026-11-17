@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.errors import AppError
 from app.repositories import audit_repository, notification_repository
 
@@ -47,6 +48,9 @@ def create(db: Session, *, org: Any, user_id: Any, job_id: UUID, report_type: st
         db.rollback()
         return get(db, org, latest["id"]), True
     version = (latest["version"] + 1) if latest else 1
+    if version > settings.report_max_versions:
+        db.rollback()
+        raise AppError("too_many_versions", 409, f"This report already has {settings.report_max_versions} versions.")
     rows = _filtered_buckets(db, job_id, options)
     total = sum(r["vehicle_count"] for r in rows)
     video = (job["metadata_snapshot"] or {}).get("video", {}).get("name") or "video"

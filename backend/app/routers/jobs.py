@@ -109,13 +109,18 @@ def retry_job(job_id: UUID, who: Principal = Depends(current_member), db: Sessio
 
 
 @router.post("/jobs/{job_id}/rerun", status_code=201, summary="Run the same video and settings again as a NEW job")
-def rerun_job(job_id: UUID, who: Principal = Depends(current_member), db: Session = Depends(get_db)):
+def rerun_job(job_id: UUID, response: Response, idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+              who: Principal = Depends(current_member), db: Session = Depends(get_db)):
     old = repo.get_job(db, who.organization_id, job_id)
     if old["status"] not in ("completed", "failed", "cancelled"):
         raise AppError("job_not_finished", 409, "Only a finished job can be run again.")
-    job, _ = repo.create_job(db, org=who.organization_id, user_id=who.user["id"], project_id=old["project_id"], upload_id=old["upload_id"],
-                             configuration_id=old["configuration_id"], idempotency_key=None, rerun_of=old["id"], source_exists=_source_exists)
-    return {"job": _view(job)}
+    # With an Idempotency-Key, a repeated click or a retried request returns the same new job instead of another one.
+    job, replayed = repo.create_job(db, org=who.organization_id, user_id=who.user["id"], project_id=old["project_id"], upload_id=old["upload_id"],
+                                    configuration_id=old["configuration_id"], idempotency_key=_key(idempotency_key), rerun_of=old["id"],
+                                    source_exists=_source_exists)
+    if replayed:
+        response.status_code = 200
+    return {"job": _view(job), "replayed": replayed}
 
 
 @router.get("/jobs/{job_id}/results", summary="Counts of a completed job (estimates)")

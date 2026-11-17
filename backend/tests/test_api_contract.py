@@ -3,6 +3,8 @@ import json
 import logging
 import re
 
+import pytest
+
 from app.core.logging_setup import JsonFormatter
 
 ERROR_KEYS = {"code", "message", "diagnosticId"}
@@ -58,7 +60,8 @@ def test_wrong_method_uses_error_shape(client):
 
 
 def test_validation_error_is_422_without_echoing_input(client, as_member):
-    r = client.post("/api/uploads", data={"notes": "SECRET-VALUE-123"})
+    r = client.post("/api/projects/00000000-0000-0000-0000-000000000000/uploads", data={"notes": "SECRET-VALUE-123"},
+                    headers={"Authorization": "Bearer placeholder-token-for-the-upload-guard"})
     assert r.status_code == 422
     body = r.json()
     _assert_error_shape(body)
@@ -87,12 +90,12 @@ def test_unexpected_error_is_500_with_diagnostic_id_and_no_leak(client):
     assert "x-request-id" in r.headers
 
 
-# --- as-built behaviour kept (legacy routes are not changed by F3) -------------
+# --- the old sample routes are gone (security review 2026-11-17) ----------------
 
-def test_legacy_unknown_job_still_returns_200_not_found(client, as_member):
-    r = client.get("/api/processing/jobs/does-not-exist")
-    assert r.status_code == 200
-    assert r.json().get("status") == "not_found"
+@pytest.mark.parametrize("path", ["/api/uploads", "/api/processing", "/api/processing/jobs/x", "/api/dashboard"])
+def test_legacy_sample_routes_are_not_registered(client, as_member, path):
+    assert client.get(path).status_code == 404
+    assert client.post(path).status_code in (404, 405)
 
 
 def test_health_and_root_still_work(client):

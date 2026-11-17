@@ -2,8 +2,27 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, FolderKanban, FileBarChart, Cpu, UploadCloud, BarChart3, Settings, Command, X } from 'lucide-react';
-import { searchIndex, type SearchResult } from '@/lib/mockData';
+import { VideoSetupService } from '@/services/videoSetup.service';
 import { cn } from '@/lib/utils';
+
+interface SearchResult {
+  id: string;
+  label: string;
+  category: 'Projects' | 'Reports' | 'Processing' | 'Uploads' | 'Analytics' | 'Settings';
+  to: string;
+  icon: string;
+}
+
+// Pages are always searchable; projects and reports come from the server (your organisation only).
+const PAGES: SearchResult[] = [
+  { id: 'p-upload', label: 'Upload a video', category: 'Uploads', to: '/upload', icon: 'upload' },
+  { id: 'p-queue', label: 'Job Queue', category: 'Processing', to: '/job-queue', icon: 'cpu' },
+  { id: 'p-processing', label: 'Processing (live)', category: 'Processing', to: '/processing', icon: 'cpu' },
+  { id: 'p-reports', label: 'All reports', category: 'Reports', to: '/reports', icon: 'file' },
+  { id: 'p-dashboard', label: 'Dashboard', category: 'Analytics', to: '/', icon: 'chart' },
+  { id: 'p-org', label: 'Organization and members', category: 'Settings', to: '/organization', icon: 'settings' },
+  { id: 'p-settings', label: 'Settings', category: 'Settings', to: '/settings', icon: 'settings' },
+];
 
 const iconMap: Record<string, typeof FolderKanban> = {
   folder: FolderKanban,
@@ -44,13 +63,36 @@ export function GlobalSearch() {
     }
   }, [open]);
 
+  const [remote, setRemote] = useState<SearchResult[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const t = setTimeout(async () => {
+      const q = query.trim();
+      try {
+        const [projects, reports] = await Promise.all([
+          VideoSetupService.listProjects({ q: q || undefined, state: 'all', limit: 8 }),
+          VideoSetupService.listReports({ limit: 50 }),
+        ]);
+        if (!alive) return;
+        const ql = q.toLowerCase();
+        setRemote([
+          ...projects.items.map((p): SearchResult => ({ id: `prj-${p.id}`, label: p.location ? `${p.name} — ${p.location}` : p.name, category: 'Projects', to: `/projects/${p.id}`, icon: 'folder' })),
+          ...reports.items.filter((r) => !ql || r.title.toLowerCase().includes(ql)).slice(0, 6)
+            .map((r): SearchResult => ({ id: `rep-${r.id}`, label: `${r.title} (v${r.version})`, category: 'Reports', to: `/reports?report=${r.id}`, icon: 'file' })),
+        ]);
+      } catch {
+        if (alive) setRemote([]);
+      }
+    }, 200);
+    return () => { alive = false; clearTimeout(t); };
+  }, [query, open]);
+
   const results = useMemo(() => {
-    if (!query.trim()) return searchIndex;
-    const q = query.toLowerCase();
-    return searchIndex.filter(
-      (r) => r.label.toLowerCase().includes(q) || r.category.toLowerCase().includes(q),
-    );
-  }, [query]);
+    const q = query.trim().toLowerCase();
+    const pages = !q ? PAGES : PAGES.filter((r) => r.label.toLowerCase().includes(q) || r.category.toLowerCase().includes(q));
+    return [...remote, ...pages];
+  }, [query, remote]);
 
   const grouped = useMemo(() => {
     const g: Record<string, SearchResult[]> = {};

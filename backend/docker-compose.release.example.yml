@@ -1,0 +1,46 @@
+# EXAMPLE ONLY (F48/F49). Not used by development and not approved for any server: hosting is undecided (F47).
+# Shows how the pieces fit: one database, one API, one worker, shared media volume. Copy and adapt after F47.
+#   docker compose -f docker-compose.release.example.yml --env-file .env.release up -d
+# Put the API behind a TLS reverse proxy with a request body limit (for example 2.1 GB) before exposing it.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    image: johnson-road-backend
+    env_file: .env.release
+    command: ["python", "-m", "app.database.migrate"]
+    depends_on: {db: {condition: service_healthy}}
+    restart: "no"
+
+  api:
+    image: johnson-road-backend
+    env_file: .env.release
+    environment: {STORAGE_ROOT: /data}
+    volumes: [media:/data]
+    ports: ["127.0.0.1:5000:5000"]     # only the reverse proxy should reach it
+    depends_on: {migrate: {condition: service_completed_successfully}}
+    restart: unless-stopped
+
+  worker:
+    image: johnson-road-backend        # build with --build-arg WITH_AI=1 for real detection
+    env_file: .env.release
+    environment: {STORAGE_ROOT: /data}
+    volumes: [media:/data]
+    command: ["python", "-m", "app.worker"]
+    depends_on: {migrate: {condition: service_completed_successfully}}
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  media:

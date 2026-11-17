@@ -51,7 +51,7 @@ export function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
       </Button>
 
       {/* Notifications */}
-      <NotificationPanel open={notifOpen} onClose={() => setNotifOpen(false)} />
+      <NotificationPanel open={notifOpen} onClose={() => setNotifOpen(false)} onToggle={() => { setNotifOpen((v) => !v); setProfileOpen(false); }} />
 
       {/* Profile */}
       <ProfileMenu

@@ -19,12 +19,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.errors import AppError
 from app.repositories import audit_repository, notification_repository
 
 SAFE_MESSAGES = {
     "unreadable_video": ("The video could not be read.", False),
     "truncated_video": ("The video ended earlier than expected, so it may be damaged.", False),
+    "frame_count_mismatch": ("The video is much longer than its file header says, so it was stopped.", False),
     "empty_video": ("The video has no frames to analyse.", False),
     "detector_unavailable": ("The detection model is not available on the server.", True),
     "source_missing": ("The uploaded video file is no longer in storage.", False),
@@ -102,6 +104,10 @@ def create_job(db: Session, *, org: Any, user_id: Any, project_id: UUID, upload_
     if cfg["targets"] == 0:
         db.rollback()
         raise AppError("configuration_empty", 409, "The analysis settings need at least one counting line or zone.")
+    active = db.execute(text("SELECT count(*) FROM jobs WHERE organization_id = :o AND status IN ('queued','running')"), {"o": org}).scalar_one()
+    if active >= settings.org_max_active_jobs:
+        db.rollback()
+        raise AppError("too_many_jobs", 429, f"Your organisation already has {active} jobs waiting or running. Wait for some to finish.")
     if rerun_of is not None:
         ok = db.execute(text("SELECT 1 FROM jobs WHERE id = :r AND project_id = :p AND organization_id = :o"),
                         {"r": rerun_of, "p": project_id, "o": org}).first()
@@ -152,8 +158,9 @@ def get_job(db: Session, org: Any, job_id: UUID, project_id: UUID | None = None)
     out = dict(row)
     if out["status"] == "queued":
         out["queue_position"] = db.execute(
-            text("SELECT count(*) + 1 FROM jobs WHERE status = 'queued' AND (queued_at, id) < (:q, :i)"),
-            {"q": out["queued_at"], "i": out["id"]}).scalar_one()
+            # Counted within the caller's organisation only: other organisations' activity is not shown.
+            text("SELECT count(*) + 1 FROM jobs WHERE status = 'queued' AND organization_id = :o AND (queued_at, id) < (:q, :i)"),
+            {"q": out["queued_at"], "i": out["id"], "o": out["organization_id"]}).scalar_one()
     return out
 
 
