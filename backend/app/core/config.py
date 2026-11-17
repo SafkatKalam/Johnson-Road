@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     supabase_jwt_audience: str = "authenticated"
     jwt_leeway_seconds: int = 10  # tolerated clock difference between Supabase and this server
     storage_root: str = "data"
+    # Provisional upload limits (open items O8/O18 are not approved yet): change them in .env, not in code.
+    upload_max_bytes: int = 2 * 1024**3
+    upload_max_duration_seconds: int = 4 * 3600
+    upload_max_pixels: int = 7680 * 4320
     s3_endpoint: str = "http://127.0.0.1:9110"
     s3_region: str = "us-east-1"
     s3_bucket: str = "johnson-road-media"

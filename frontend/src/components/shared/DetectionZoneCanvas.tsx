@@ -10,12 +10,24 @@ interface Point {
 interface DetectionZoneCanvasProps {
   width?: number;
   height?: number;
+  /** A real frame of the uploaded video to draw on. Without it, a placeholder background is shown. */
+  imageUrl?: string | null;
+  /** Controlled mode: points as fractions of the frame (0 to 1). */
+  value?: Point[];
+  onChange?: (points: Point[]) => void;
 }
 
-export function DetectionZoneCanvas({ width = 480, height = 270 }: DetectionZoneCanvasProps) {
+export function DetectionZoneCanvas({ width = 480, height = 270, imageUrl, value, onChange }: DetectionZoneCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [points, setPoints] = useState<Point[]>([]);
+  const [own, setOwn] = useState<Point[]>([]);
   const [hoveredPoint, setHoveredPoint] = useState<number | null>(null);
+  const controlled = value !== undefined;
+  // Internally the drawing uses view-box units; the controlled value is stored as fractions so it survives resizing.
+  const points: Point[] = controlled ? value.map((p) => ({ x: p.x * width, y: p.y * height })) : own;
+  const setPoints = useCallback((next: Point[]) => {
+    if (controlled) onChange?.(next.map((p) => ({ x: Math.min(1, Math.max(0, p.x / width)), y: Math.min(1, Math.max(0, p.y / height)) })));
+    else setOwn(next);
+  }, [controlled, onChange, width, height]);
 
   const handleClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
@@ -23,10 +35,10 @@ export function DetectionZoneCanvas({ width = 480, height = 270 }: DetectionZone
     const rect = svg.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * width;
     const y = ((e.clientY - rect.top) / rect.height) * height;
-    setPoints((prev) => [...prev, { x, y }]);
-  }, [width, height]);
+    setPoints([...points, { x, y }]);
+  }, [width, height, points, setPoints]);
 
-  const undo = () => setPoints((prev) => prev.slice(0, -1));
+  const undo = () => setPoints(points.slice(0, -1));
   const clear = () => setPoints([]);
 
   const pathData = points.length > 0
@@ -51,11 +63,17 @@ export function DetectionZoneCanvas({ width = 480, height = 270 }: DetectionZone
       </div>
 
       <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-ink-950/60">
-        {/* Simulated video frame */}
-        <div className="absolute inset-0 bg-gradient-to-br from-ink-800/40 to-ink-900/60" />
-        <div className="absolute inset-0 bg-grid-faint [background-size:24px_24px] opacity-30" />
+        {imageUrl ? (
+          <img src={imageUrl} alt="First frame of the uploaded video" className="absolute inset-0 h-full w-full object-fill" />
+        ) : (
+          <>
+            {/* Simulated video frame */}
+            <div className="absolute inset-0 bg-gradient-to-br from-ink-800/40 to-ink-900/60" />
+            <div className="absolute inset-0 bg-grid-faint [background-size:24px_24px] opacity-30" />
+          </>
+        )}
         <div className="absolute left-3 top-3 rounded bg-ink-950/60 px-2 py-0.5 text-[10px] font-mono text-ink-300 backdrop-blur-sm">
-          CAM-A406-03 · LIVE PREVIEW
+          {imageUrl ? 'FRAME FROM YOUR VIDEO' : 'CAM-A406-03 · LIVE PREVIEW'}
         </div>
 
         <svg

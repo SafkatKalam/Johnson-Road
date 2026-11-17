@@ -3,6 +3,9 @@ from app.routers.organization import public_router as invites_router
 from app.routers.organization import router as organization_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.processing import router as processing_router
+from app.routers.analysis_config import router as analysis_config_router
+from app.routers.jobs import router as jobs_router
+from app.routers.project_uploads import router as project_uploads_router
 from app.routers.projects import router as projects_router
 from app.routers.reports import router as reports_router
 from app.routers.uploads import router as uploads_router
@@ -13,6 +16,9 @@ __all__ = [
     "organization_router",
     "dashboard_router",
     "projects_router",
+    "project_uploads_router",
+    "analysis_config_router",
+    "jobs_router",
     "uploads_router",
     "processing_router",
     "reports_router",

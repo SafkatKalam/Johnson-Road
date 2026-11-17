@@ -89,8 +89,18 @@ def schema_current(directory: Path | None = None) -> bool:
 
 
 def worker_ready() -> bool:
-    """No separate worker process exists yet (F29), so processing is not available.
+    """True when a worker wrote a heartbeat in the last 30 seconds AND says it has a real (non-stub) detector loaded."""
 
-    Reported honestly as False until the worker writes a heartbeat that this function can read.
-    """
-    return False
+    def compute() -> bool:
+        try:
+            with _connect() as conn:
+                row = conn.execute("SELECT value FROM settings WHERE key = 'worker.heartbeat'").fetchone()
+            if not row or not row[0]:
+                return False
+            beat = row[0]
+            return bool(beat.get("processingReady")) and (time.time() - float(beat.get("at", 0))) < 30
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("worker check failed: %s", type(exc).__name__)
+            return False
+
+    return _cached("worker", compute)

@@ -7,7 +7,7 @@ interface LinePoint {
   y: number;
 }
 
-interface CountLine {
+export interface CountLine {
   id: number;
   start: LinePoint;
   end: LinePoint;
@@ -17,11 +17,28 @@ interface CountLine {
 interface CountLineCanvasProps {
   width?: number;
   height?: number;
+  /** A real frame of the uploaded video to draw on. Without it, a placeholder background is shown. */
+  imageUrl?: string | null;
+  /** Controlled mode: start and end as fractions of the frame (0 to 1). */
+  value?: CountLine[];
+  onChange?: (lines: CountLine[]) => void;
 }
 
-export function CountLineCanvas({ width = 480, height = 270 }: CountLineCanvasProps) {
+export function CountLineCanvas({ width = 480, height = 270, imageUrl, value, onChange }: CountLineCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [lines, setLines] = useState<CountLine[]>([]);
+  const [own, setOwn] = useState<CountLine[]>([]);
+  const controlled = value !== undefined;
+  const scale = (p: LinePoint, sx: number, sy: number) => ({ x: p.x * sx, y: p.y * sy });
+  const lines: CountLine[] = controlled ? value.map((l) => ({ ...l, start: scale(l.start, width, height), end: scale(l.end, width, height) })) : own;
+  const setLines = (update: (prev: CountLine[]) => CountLine[]) => {
+    const next = update(lines);
+    if (controlled) {
+      const clamp = (n: number) => Math.min(1, Math.max(0, n));
+      onChange?.(next.map((l) => ({ ...l, start: { x: clamp(l.start.x / width), y: clamp(l.start.y / height) }, end: { x: clamp(l.end.x / width), y: clamp(l.end.y / height) } })));
+    } else {
+      setOwn(next);
+    }
+  };
   const [drawingStart, setDrawingStart] = useState<LinePoint | null>(null);
   const [hoverPos, setHoverPos] = useState<LinePoint | null>(null);
 
@@ -65,7 +82,7 @@ export function CountLineCanvas({ width = 480, height = 270 }: CountLineCanvasPr
   };
 
   const undo = () => setLines((prev) => prev.slice(0, -1));
-  const clear = () => setLines([]);
+  const clear = () => setLines(() => []);
 
   return (
     <div className="space-y-3">
@@ -84,10 +101,16 @@ export function CountLineCanvas({ width = 480, height = 270 }: CountLineCanvasPr
       </div>
 
       <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-ink-950/60">
-        <div className="absolute inset-0 bg-gradient-to-br from-ink-800/40 to-ink-900/60" />
-        <div className="absolute inset-0 bg-grid-faint [background-size:24px_24px] opacity-30" />
+        {imageUrl ? (
+          <img src={imageUrl} alt="First frame of the uploaded video" className="absolute inset-0 h-full w-full object-fill" />
+        ) : (
+          <>
+            <div className="absolute inset-0 bg-gradient-to-br from-ink-800/40 to-ink-900/60" />
+            <div className="absolute inset-0 bg-grid-faint [background-size:24px_24px] opacity-30" />
+          </>
+        )}
         <div className="absolute left-3 top-3 rounded bg-ink-950/60 px-2 py-0.5 text-[10px] font-mono text-ink-300 backdrop-blur-sm">
-          CAM-A406-03 · LIVE PREVIEW
+          {imageUrl ? 'FRAME FROM YOUR VIDEO' : 'CAM-A406-03 · LIVE PREVIEW'}
         </div>
 
         <svg

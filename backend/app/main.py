@@ -13,14 +13,17 @@ from app.core.logging_setup import configure_logging
 from app.core.request_context import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.routers import (
     account_router,
+    analysis_config_router,
     invites_router,
+    jobs_router,
     organization_router,
     dashboard_router,
     processing_router,
+    project_uploads_router,
     projects_router,
-    reports_router,
     uploads_router,
 )
+from app.routers.insights import router as insights_router
 
 configure_logging()
 
@@ -60,9 +63,13 @@ _members_only = [Depends(current_member)]
 app.include_router(organization_router, prefix=settings.api_prefix, dependencies=_members_only)
 app.include_router(dashboard_router, prefix=settings.api_prefix, dependencies=_members_only)
 app.include_router(projects_router, prefix=settings.api_prefix, dependencies=_members_only)
+app.include_router(project_uploads_router, prefix=settings.api_prefix, dependencies=_members_only)
+app.include_router(analysis_config_router, prefix=settings.api_prefix, dependencies=_members_only)
+app.include_router(jobs_router, prefix=settings.api_prefix, dependencies=_members_only)
 app.include_router(uploads_router, prefix=settings.api_prefix, dependencies=_members_only)
 app.include_router(processing_router, prefix=settings.api_prefix, dependencies=_members_only)
-app.include_router(reports_router, prefix=settings.api_prefix, dependencies=_members_only)
+# The sample-data reports router (app/routers/reports.py) is no longer registered: /reports is now the real F38 API.
+app.include_router(insights_router, prefix=settings.api_prefix, dependencies=_members_only)
 
 
 
